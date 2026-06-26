@@ -6,6 +6,7 @@ import com.tuoman.ai_task_orchestrator.service.TaskService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import com.tuoman.ai_task_orchestrator.dto.TaskDetailResponse;
 
 @RestController
 @RequestMapping("/tasks")
@@ -17,5 +18,9 @@ public class TaskController {
     @PostMapping
     public CreateTaskResponse createTask(@Valid @RequestBody CreateTaskRequest request) {
         return taskService.createTask(request);
+    }
+    @GetMapping("/{taskId}")
+    public TaskDetailResponse getTaskById(@PathVariable Long taskId) {
+        return taskService.getTaskById(taskId);
     }
 }
