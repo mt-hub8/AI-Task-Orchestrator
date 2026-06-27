@@ -1,5 +1,6 @@
 package com.tuoman.ai_task_orchestrator.service;
 
+import com.tuoman.ai_task_orchestrator.mq.TaskDispatchProducer;
 import com.tuoman.ai_task_orchestrator.dto.CreateTaskRequest;
 import com.tuoman.ai_task_orchestrator.dto.CreateTaskResponse;
 import com.tuoman.ai_task_orchestrator.dto.TaskDetailResponse;
@@ -41,6 +42,8 @@ public class TaskService {
                 TaskStatus.PENDING,
                 "任务创建成功"
         );
+
+        taskDispatchProducer.sendTaskCreatedMessage(savedTask.getId());
 
         return new CreateTaskResponse(savedTask.getId(), savedTask.getStatus());
     }
@@ -110,4 +113,5 @@ public class TaskService {
                 task.getUpdatedAt()
         );
     }
+    private final TaskDispatchProducer taskDispatchProducer;
 }
