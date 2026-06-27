@@ -4,7 +4,10 @@ import com.tuoman.ai_task_orchestrator.dto.CreateTaskRequest;
 import com.tuoman.ai_task_orchestrator.dto.CreateTaskResponse;
 import com.tuoman.ai_task_orchestrator.dto.TaskDetailResponse;
 import com.tuoman.ai_task_orchestrator.entity.TaskEntity;
+import com.tuoman.ai_task_orchestrator.entity.TaskEventEntity;
+import com.tuoman.ai_task_orchestrator.enums.TaskEventType;
 import com.tuoman.ai_task_orchestrator.enums.TaskStatus;
+import com.tuoman.ai_task_orchestrator.repository.TaskEventRepository;
 import com.tuoman.ai_task_orchestrator.repository.TaskRepository;
 import com.tuoman.ai_task_orchestrator.state.TaskStateMachine;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +22,8 @@ public class TaskService {
 
     private final TaskRepository taskRepository;
 
+    private final TaskEventRepository taskEventRepository;
+
     private final TaskStateMachine taskStateMachine;
 
     @Transactional
@@ -28,6 +33,14 @@ public class TaskService {
         task.setStatus(TaskStatus.PENDING);
 
         TaskEntity savedTask = taskRepository.save(task);
+
+        recordTaskEvent(
+                savedTask.getId(),
+                TaskEventType.TASK_CREATED,
+                null,
+                TaskStatus.PENDING,
+                "任务创建成功"
+        );
 
         return new CreateTaskResponse(savedTask.getId(), savedTask.getStatus());
     }
@@ -39,7 +52,7 @@ public class TaskService {
     }
 
     @Transactional
-    public TaskDetailResponse updateTaskStatus(Long taskId, TaskStatus targetStatus) {
+    public TaskDetailResponse updateTaskStatus(Long taskId, TaskStatus targetStatus, String message) {
         TaskEntity task = findTaskOrThrow(taskId);
 
         TaskStatus currentStatus = task.getStatus();
@@ -55,7 +68,32 @@ public class TaskService {
 
         TaskEntity savedTask = taskRepository.save(task);
 
+        recordTaskEvent(
+                savedTask.getId(),
+                TaskEventType.STATUS_CHANGED,
+                currentStatus,
+                targetStatus,
+                message
+        );
+
         return toTaskDetailResponse(savedTask);
+    }
+
+    private void recordTaskEvent(
+            Long taskId,
+            TaskEventType eventType,
+            TaskStatus fromStatus,
+            TaskStatus toStatus,
+            String message
+    ) {
+        TaskEventEntity event = new TaskEventEntity();
+        event.setTaskId(taskId);
+        event.setEventType(eventType);
+        event.setFromStatus(fromStatus);
+        event.setToStatus(toStatus);
+        event.setMessage(message);
+
+        taskEventRepository.save(event);
     }
 
     private TaskEntity findTaskOrThrow(Long taskId) {

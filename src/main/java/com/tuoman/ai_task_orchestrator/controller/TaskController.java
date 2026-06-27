@@ -31,6 +31,6 @@ public class TaskController {
             @PathVariable Long taskId,
             @Valid @RequestBody UpdateTaskStatusRequest request
     ) {
-        return taskService.updateTaskStatus(taskId, request.getStatus());
+        return taskService.updateTaskStatus(taskId, request.getStatus(), request.getMessage());
     }
 }

@@ -12,4 +12,6 @@ public class UpdateTaskStatusRequest {
     @NotNull(message = "status不能为空")
     private TaskStatus status;
 
+    private String message;
+
 }
