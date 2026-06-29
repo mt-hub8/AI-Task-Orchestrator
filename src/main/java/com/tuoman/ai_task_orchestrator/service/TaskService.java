@@ -17,6 +17,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.LocalDateTime;
+
 @Service
 @RequiredArgsConstructor
 public class TaskService {
@@ -115,6 +117,44 @@ public class TaskService {
                 currentStatus,
                 targetStatus,
                 normalizedErrorMessage
+        );
+
+        return toTaskDetailResponse(savedTask);
+    }
+
+    @Transactional
+    public TaskDetailResponse markTaskRetryPending(Long taskId, String errorMessage) {
+        TaskEntity task = findTaskOrThrow(taskId);
+        TaskStatus currentStatus = task.getStatus();
+        TaskStatus targetStatus = TaskStatus.RETRY_PENDING;
+
+        if (!taskStateMachine.canTransit(currentStatus, targetStatus)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "非法状态流转：" + currentStatus + " -> " + targetStatus
+            );
+        }
+
+        if (task.getRetryCount() >= task.getMaxRetry()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "任务已达到最大重试次数");
+        }
+
+        String normalizedErrorMessage = normalizeErrorMessage(errorMessage);
+        int nextRetryCount = task.getRetryCount() + 1;
+
+        task.setRetryCount(nextRetryCount);
+        task.setNextRetryAt(LocalDateTime.now().plusSeconds(10));
+        task.setErrorMessage(normalizedErrorMessage);
+        task.setStatus(targetStatus);
+
+        TaskEntity savedTask = taskRepository.save(task);
+
+        recordTaskEvent(
+                savedTask.getId(),
+                TaskEventType.STATUS_CHANGED,
+                currentStatus,
+                targetStatus,
+                "任务执行失败，等待第 " + nextRetryCount + " 次重试：" + normalizedErrorMessage
         );
 
         return toTaskDetailResponse(savedTask);
