@@ -12,7 +12,8 @@ public class TaskStateMachine {
 
     private static final Map<TaskStatus, Set<TaskStatus>> ALLOWED_TRANSITIONS = Map.of(
             TaskStatus.PENDING, EnumSet.of(TaskStatus.RUNNING, TaskStatus.CANCELLED),
-            TaskStatus.RUNNING, EnumSet.of(TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED),
+            TaskStatus.RUNNING, EnumSet.of(TaskStatus.SUCCESS, TaskStatus.RETRY_PENDING, TaskStatus.FAILED, TaskStatus.CANCELLED),
+            TaskStatus.RETRY_PENDING, EnumSet.of(TaskStatus.RUNNING, TaskStatus.FAILED),
             TaskStatus.SUCCESS, EnumSet.noneOf(TaskStatus.class),
             TaskStatus.FAILED, EnumSet.noneOf(TaskStatus.class),
             TaskStatus.CANCELLED, EnumSet.noneOf(TaskStatus.class)

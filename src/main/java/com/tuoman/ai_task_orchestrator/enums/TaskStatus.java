@@ -7,6 +7,8 @@ public enum TaskStatus {
 
     SUCCESS,
 
+    RETRY_PENDING,
+
     FAILED,
 
     CANCELLED
