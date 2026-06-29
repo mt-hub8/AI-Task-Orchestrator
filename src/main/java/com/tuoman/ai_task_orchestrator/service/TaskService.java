@@ -41,6 +41,8 @@ public class TaskService {
         task.setRetryCount(0);
         task.setMaxRetry(3);
         task.setNextRetryAt(null);
+        task.setTimeoutSeconds(30);
+        task.setTimeoutAt(null);
 
         TaskEntity savedTask = taskRepository.save(task);
 
@@ -109,6 +111,8 @@ public class TaskService {
         }
 
         task.setStatus(targetStatus);
+        int timeoutSeconds = task.getTimeoutSeconds() == null ? 30 : task.getTimeoutSeconds();
+        task.setTimeoutAt(LocalDateTime.now().plusSeconds(timeoutSeconds));
 
         TaskEntity savedTask = taskRepository.save(task);
 
@@ -278,6 +282,8 @@ public class TaskService {
                 task.getRetryCount(),
                 task.getMaxRetry(),
                 task.getNextRetryAt(),
+                task.getTimeoutSeconds(),
+                task.getTimeoutAt(),
                 task.getCreatedAt(),
                 task.getUpdatedAt()
         );

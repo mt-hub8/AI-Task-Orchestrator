@@ -36,6 +36,12 @@ public class TaskEntity {
     @Column(name = "next_retry_at")
     private LocalDateTime nextRetryAt;
 
+    @Column(name = "timeout_seconds", nullable = false)
+    private Integer timeoutSeconds;
+
+    @Column(name = "timeout_at")
+    private LocalDateTime timeoutAt;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

@@ -24,6 +24,10 @@ public class TaskDetailResponse {
 
     private LocalDateTime nextRetryAt;
 
+    private Integer timeoutSeconds;
+
+    private LocalDateTime timeoutAt;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

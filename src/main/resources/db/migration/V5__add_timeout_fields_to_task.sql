@@ -1,0 +1,3 @@
+ALTER TABLE task
+    ADD COLUMN timeout_seconds INT NOT NULL DEFAULT 30,
+    ADD COLUMN timeout_at DATETIME(6) NULL;
