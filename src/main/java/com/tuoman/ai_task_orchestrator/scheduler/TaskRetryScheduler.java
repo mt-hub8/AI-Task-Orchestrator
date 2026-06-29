@@ -31,8 +31,18 @@ public class TaskRetryScheduler {
         log.info("Found retryable tasks count={}", tasks.size());
 
         for (TaskEntity task : tasks) {
-            log.info("Resend retry task message, taskId={}", task.getId());
-            taskDispatchProducer.sendTaskCreatedMessage(task.getId());
+            try {
+                log.info("Resend retry task message, taskId={}", task.getId());
+                taskDispatchProducer.sendTaskCreatedMessage(task.getId());
+
+                LocalDateTime nextRetryAt = LocalDateTime.now().plusSeconds(30);
+                task.setNextRetryAt(nextRetryAt);
+                taskRepository.save(task);
+
+                log.info("Retry task message resent, taskId={}, nextRetryAt postponed to {}", task.getId(), nextRetryAt);
+            } catch (Exception e) {
+                log.error("Failed to resend retry task message, taskId={}", task.getId(), e);
+            }
         }
     }
 }
