@@ -36,6 +36,9 @@ public class TaskService {
         TaskEntity task = new TaskEntity();
         task.setPrompt(request.getPrompt());
         task.setStatus(TaskStatus.PENDING);
+        task.setRetryCount(0);
+        task.setMaxRetry(3);
+        task.setNextRetryAt(null);
 
         TaskEntity savedTask = taskRepository.save(task);
 
@@ -159,6 +162,9 @@ public class TaskService {
                 task.getPrompt(),
                 task.getStatus(),
                 task.getErrorMessage(),
+                task.getRetryCount(),
+                task.getMaxRetry(),
+                task.getNextRetryAt(),
                 task.getCreatedAt(),
                 task.getUpdatedAt()
         );

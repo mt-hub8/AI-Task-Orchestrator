@@ -18,6 +18,12 @@ public class TaskDetailResponse {
 
     private String errorMessage;
 
+    private int retryCount;
+
+    private int maxRetry;
+
+    private LocalDateTime nextRetryAt;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

@@ -27,6 +27,15 @@ public class TaskEntity {
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 
+    @Column(name = "retry_count", nullable = false)
+    private int retryCount;
+
+    @Column(name = "max_retry", nullable = false)
+    private int maxRetry;
+
+    @Column(name = "next_retry_at")
+    private LocalDateTime nextRetryAt;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

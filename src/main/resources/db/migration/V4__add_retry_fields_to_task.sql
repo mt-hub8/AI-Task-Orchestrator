@@ -1,0 +1,4 @@
+ALTER TABLE task
+    ADD COLUMN retry_count INT NOT NULL DEFAULT 0,
+    ADD COLUMN max_retry INT NOT NULL DEFAULT 3,
+    ADD COLUMN next_retry_at DATETIME(6) NULL;
