@@ -21,6 +21,10 @@ import org.springframework.web.server.ResponseStatusException;
 @RequiredArgsConstructor
 public class TaskService {
 
+    private static final String DEFAULT_ERROR_MESSAGE = "未知错误";
+
+    private static final int MAX_ERROR_MESSAGE_LENGTH = 2000;
+
     private final TaskRepository taskRepository;
 
     private final TaskEventRepository taskEventRepository;
@@ -82,6 +86,51 @@ public class TaskService {
         return toTaskDetailResponse(savedTask);
     }
 
+    @Transactional
+    public TaskDetailResponse markTaskFailed(Long taskId, String errorMessage) {
+        TaskEntity task = findTaskOrThrow(taskId);
+        TaskStatus currentStatus = task.getStatus();
+        TaskStatus targetStatus = TaskStatus.FAILED;
+
+        if (!taskStateMachine.canTransit(currentStatus, targetStatus)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "非法状态流转：" + currentStatus + " -> " + targetStatus
+            );
+        }
+
+        String normalizedErrorMessage = normalizeErrorMessage(errorMessage);
+
+        task.setStatus(targetStatus);
+        task.setErrorMessage(normalizedErrorMessage);
+
+        TaskEntity savedTask = taskRepository.save(task);
+
+        recordTaskEvent(
+                savedTask.getId(),
+                TaskEventType.STATUS_CHANGED,
+                currentStatus,
+                targetStatus,
+                normalizedErrorMessage
+        );
+
+        return toTaskDetailResponse(savedTask);
+    }
+
+    private String normalizeErrorMessage(String errorMessage) {
+        String normalizedErrorMessage = errorMessage;
+
+        if (normalizedErrorMessage == null || normalizedErrorMessage.isBlank()) {
+            normalizedErrorMessage = DEFAULT_ERROR_MESSAGE;
+        }
+
+        if (normalizedErrorMessage.length() > MAX_ERROR_MESSAGE_LENGTH) {
+            return normalizedErrorMessage.substring(0, MAX_ERROR_MESSAGE_LENGTH);
+        }
+
+        return normalizedErrorMessage;
+    }
+
     private void recordTaskEvent(
             Long taskId,
             TaskEventType eventType,
@@ -109,6 +158,7 @@ public class TaskService {
                 task.getId(),
                 task.getPrompt(),
                 task.getStatus(),
+                task.getErrorMessage(),
                 task.getCreatedAt(),
                 task.getUpdatedAt()
         );

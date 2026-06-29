@@ -16,6 +16,8 @@ public class TaskDetailResponse {
 
     private TaskStatus status;
 
+    private String errorMessage;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

@@ -15,26 +15,35 @@ public class TaskExecutionService {
     public void executeTask(Long taskId) {
         log.info("Start executing task, taskId={}", taskId);
 
-        taskService.updateTaskStatus(
-                taskId,
-                TaskStatus.RUNNING,
-                "任务开始执行"
-        );
+        try {
+            taskService.updateTaskStatus(
+                    taskId,
+                    TaskStatus.RUNNING,
+                    "任务开始执行"
+            );
 
-        simulateTaskExecution(taskId);
+            simulateTaskExecution(taskId);
 
-        taskService.updateTaskStatus(
-                taskId,
-                TaskStatus.SUCCESS,
-                "任务执行成功"
-        );
+            taskService.updateTaskStatus(
+                    taskId,
+                    TaskStatus.SUCCESS,
+                    "任务执行成功"
+            );
 
-        log.info("Finish executing task, taskId={}", taskId);
+            log.info("Finish executing task, taskId={}", taskId);
+        } catch (Exception e) {
+            log.error("Task execution failed, taskId={}", taskId, e);
+            taskService.markTaskFailed(taskId, e.getMessage());
+        }
     }
 
     private void simulateTaskExecution(Long taskId) {
         try {
             log.info("Simulating task execution, taskId={}", taskId);
+            String prompt = taskService.getTaskById(taskId).getPrompt();
+            if (prompt != null && (prompt.contains("fail") || prompt.contains("失败"))) {
+                throw new RuntimeException("模拟任务执行失败");
+            }
             Thread.sleep(3000);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

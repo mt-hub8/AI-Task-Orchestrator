@@ -24,6 +24,9 @@ public class TaskEntity {
     @Column(nullable = false, length = 32)
     private TaskStatus status;
 
+    @Column(name = "error_message", columnDefinition = "TEXT")
+    private String errorMessage;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
