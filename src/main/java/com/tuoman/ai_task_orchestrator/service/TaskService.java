@@ -192,6 +192,39 @@ public class TaskService {
         return toTaskDetailResponse(savedTask);
     }
 
+    @Transactional
+    public TaskDetailResponse cancelTask(Long taskId, String message) {
+        TaskEntity task = findTaskOrThrow(taskId);
+        TaskStatus currentStatus = task.getStatus();
+        TaskStatus targetStatus = TaskStatus.CANCELLED;
+
+        if (currentStatus != TaskStatus.PENDING && currentStatus != TaskStatus.RETRY_PENDING) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前任务状态不允许取消");
+        }
+
+        if (!taskStateMachine.canTransit(currentStatus, targetStatus)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "非法状态流转：" + currentStatus + " -> " + targetStatus
+            );
+        }
+
+        task.setStatus(targetStatus);
+        task.setNextRetryAt(null);
+
+        TaskEntity savedTask = taskRepository.save(task);
+
+        recordTaskEvent(
+                savedTask.getId(),
+                TaskEventType.STATUS_CHANGED,
+                currentStatus,
+                targetStatus,
+                message
+        );
+
+        return toTaskDetailResponse(savedTask);
+    }
+
     private String normalizeErrorMessage(String errorMessage) {
         String normalizedErrorMessage = errorMessage;
 

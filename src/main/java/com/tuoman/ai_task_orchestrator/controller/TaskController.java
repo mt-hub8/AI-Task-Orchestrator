@@ -33,4 +33,9 @@ public class TaskController {
     ) {
         return taskService.updateTaskStatus(taskId, request.getStatus(), request.getMessage());
     }
+
+    @PostMapping("/{taskId}/cancel")
+    public TaskDetailResponse cancelTask(@PathVariable Long taskId) {
+        return taskService.cancelTask(taskId, "任务已取消");
+    }
 }
