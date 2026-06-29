@@ -33,7 +33,13 @@ public class TaskExecutionService {
             log.info("Finish executing task, taskId={}", taskId);
         } catch (Exception e) {
             log.error("Task execution failed, taskId={}", taskId, e);
-            taskService.markTaskFailed(taskId, e.getMessage());
+            try {
+                taskService.markTaskRetryPending(taskId, e.getMessage());
+                log.info("Task entered retry pending, taskId={}", taskId);
+            } catch (Exception retryPendingException) {
+                log.error("Task cannot retry, mark as failed, taskId={}", taskId, retryPendingException);
+                taskService.markTaskFailed(taskId, e.getMessage());
+            }
         }
     }
 
