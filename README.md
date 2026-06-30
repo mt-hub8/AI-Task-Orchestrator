@@ -1,248 +1,162 @@
-# AI-Task-Orchestrator
+# AI Task Orchestrator
 
-A Spring Boot based AI task orchestration system.
+## 一、项目简介
 
-## Current Version
+AI Task Orchestrator 是一个基于 Spring Boot 的 AI 任务编排与异步执行系统，用于模拟企业级 AI Agent / LLM 任务平台中的任务创建、异步调度、状态追踪、失败处理、重试、幂等、取消和超时控制。
 
-V0.6 - Async task dispatch and simulated execution with RabbitMQ.
+当前阶段还没有真正接入 LLM、RAG、Agent，也没有实现模型推理能力。项目当前重点是先构建可靠的任务编排底座，为后续接入真实 AI 能力打好工程基础。
 
-## What It Does
+## 二、项目要解决的问题
 
-AI-Task-Orchestrator provides a basic backend workflow for creating, tracking, dispatching, and executing AI tasks.
+- 长耗时 AI 任务不能阻塞 HTTP 请求。
+- 任务需要有明确的状态追踪。
+- 任务失败后需要记录失败原因。
+- 临时失败需要支持自动重试。
+- MQ 重复投递需要有幂等保护。
+- 用户需要能够取消任务。
+- 任务执行不能无限卡住，需要超时控制。
+- 本地开发环境需要可复现、可快速启动。
 
-The current workflow is:
+## 三、当前已实现能力
 
-1. A client creates a task through `POST /tasks`.
-2. The task is saved to MySQL with status `PENDING`.
-3. A task creation event is recorded in `task_event`.
-4. The task ID is sent to RabbitMQ.
-5. A consumer receives the message and simulates task execution.
-6. The task status changes from `PENDING` to `RUNNING`, then to `SUCCESS`.
+- 创建任务：`POST /tasks`
+- 查询任务：`GET /tasks/{taskId}`
+- 状态机：`PENDING` / `RUNNING` / `RETRY_PENDING` / `SUCCESS` / `FAILED` / `CANCELLED`
+- 事件日志：`task_event`
+- Flyway 数据库迁移
+- RabbitMQ 异步任务投递
+- Consumer 模拟任务执行
+- 失败处理与 `errorMessage`
+- 自动重试：`retryCount` / `maxRetry` / `nextRetryAt`
+- Consumer 入口幂等保护
+- Scheduler 重复投递保护
+- 开发测试重复投递接口
+- 取消任务接口：`POST /tasks/{taskId}/cancel`
+- `RUNNING` 任务协作式取消
+- 超时字段：`timeoutSeconds` / `timeoutAt`
+- 超时扫描器
+- Docker Compose 本地 MySQL / RabbitMQ 环境
 
-## Features
+## 四、技术栈
 
-- Create AI tasks.
-- Query task details.
-- Update task status.
-- Validate task status transitions with a state machine.
-- Record task lifecycle events.
-- Manage database schema with Flyway.
-- Dispatch created tasks asynchronously through RabbitMQ.
-- Simulate background task execution.
-
-## Tech Stack
-
-- Java 21
-- Spring Boot 3.5.16
+- Java
+- Spring Boot
 - Spring Web
 - Spring Data JPA
-- Bean Validation
 - MySQL
 - Flyway
 - RabbitMQ
-- Maven
+- Docker Compose
+- Maven Wrapper
 - Lombok
 
-## Version History
-
-| Version | Description |
-| --- | --- |
-| V0.1 | Create task API |
-| V0.2 | Task query API |
-| V0.3 | Task state machine |
-| V0.4 | Task event log |
-| V0.5 | Flyway database migration |
-| V0.6 | RabbitMQ async dispatch and simulated task execution |
-
-## Task Status
-
-Supported task statuses:
-
-- `PENDING`
-- `RUNNING`
-- `SUCCESS`
-- `FAILED`
-- `CANCELLED`
-
-Allowed transitions:
-
-| From | To |
-| --- | --- |
-| `PENDING` | `RUNNING`, `CANCELLED` |
-| `RUNNING` | `SUCCESS`, `FAILED`, `CANCELLED` |
-| `SUCCESS` | No further transition |
-| `FAILED` | No further transition |
-| `CANCELLED` | No further transition |
-
-## API
-
-### Create Task
-
-```http
-POST /tasks
-Content-Type: application/json
-```
-
-Request body:
-
-```json
-{
-  "prompt": "Write a short summary about Spring Boot."
-}
-```
-
-Response:
-
-```json
-{
-  "taskId": 1,
-  "status": "PENDING"
-}
-```
-
-### Get Task Detail
-
-```http
-GET /tasks/{taskId}
-```
-
-Response:
-
-```json
-{
-  "taskId": 1,
-  "prompt": "Write a short summary about Spring Boot.",
-  "status": "SUCCESS",
-  "createdAt": "2026-06-28T15:00:00",
-  "updatedAt": "2026-06-28T15:00:03"
-}
-```
-
-### Update Task Status
-
-```http
-PATCH /tasks/{taskId}/status
-Content-Type: application/json
-```
-
-Request body:
-
-```json
-{
-  "status": "FAILED",
-  "message": "Task execution failed"
-}
-```
-
-Response:
-
-```json
-{
-  "taskId": 1,
-  "prompt": "Write a short summary about Spring Boot.",
-  "status": "FAILED",
-  "createdAt": "2026-06-28T15:00:00",
-  "updatedAt": "2026-06-28T15:00:05"
-}
-```
-
-## Local Development
-
-### Requirements
-
-- JDK 21 or later
-- MySQL 8
-- RabbitMQ
-
-### Database
-
-The default database configuration is in `src/main/resources/application.properties`:
-
-```properties
-spring.datasource.url=jdbc:mysql://localhost:3306/ai_task_orchestrator_flyway?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
-spring.datasource.username=root
-spring.datasource.password=123456
-```
-
-Flyway migrations are stored in:
+## 五、核心流程
 
 ```text
-src/main/resources/db/migration
+用户提交任务
+-> task 入库，状态 PENDING
+-> 发送 RabbitMQ 消息
+-> Consumer 接收消息
+-> PENDING / RETRY_PENDING -> RUNNING
+-> 模拟执行
+-> 成功：RUNNING -> SUCCESS
+-> 失败可重试：RUNNING -> RETRY_PENDING
+-> Scheduler 到期重新投递
+-> 重试耗尽：RUNNING -> FAILED
+-> 用户取消：PENDING / RETRY_PENDING / RUNNING -> CANCELLED
+-> 超时扫描：RUNNING -> FAILED
 ```
 
-Current migration files:
+## 六、状态流转
 
-- `V1__create_task_table.sql`
-- `V2__create_task_event_table.sql`
+当前合法主流程：
 
-### RabbitMQ
-
-Default RabbitMQ configuration:
-
-```properties
-spring.rabbitmq.host=localhost
-spring.rabbitmq.port=5672
-spring.rabbitmq.username=guest
-spring.rabbitmq.password=guest
+```text
+PENDING -> RUNNING
+PENDING -> CANCELLED
+RUNNING -> SUCCESS
+RUNNING -> RETRY_PENDING
+RUNNING -> FAILED
+RUNNING -> CANCELLED
+RETRY_PENDING -> RUNNING
+RETRY_PENDING -> FAILED
+RETRY_PENDING -> CANCELLED
 ```
 
-The application declares:
+`SUCCESS` / `FAILED` / `CANCELLED` 是终态。
 
-- Exchange: `task.exchange`
-- Queue: `task.created.queue`
-- Routing key: `task.created`
+## 七、本地启动
 
-### Run Tests
+详细本地启动方式见：
 
-```bash
-./mvnw test
+```text
+docs/local-dev.md
 ```
 
-On Windows:
+启动 MySQL / RabbitMQ：
 
 ```powershell
-.\mvnw.cmd test
+docker compose up -d
 ```
 
-### Run The Application
-
-```bash
-./mvnw spring-boot:run
-```
-
-On Windows:
+PowerShell 启动 Spring Boot：
 
 ```powershell
-.\mvnw.cmd spring-boot:run
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=docker"
 ```
 
-The application starts on:
+## 八、主要接口
 
-```text
-http://localhost:8080
-```
+- `POST /tasks`
+- `GET /tasks/{taskId}`
+- `PATCH /tasks/{taskId}/status`
+- `POST /tasks/{taskId}/cancel`
+- `POST /dev/tasks/{taskId}/dispatch`
 
-## Project Structure
+`/dev/tasks/{taskId}/dispatch` 仅用于本地开发测试重复投递，不是生产接口。
 
-```text
-src/main/java/com/tuoman/ai_task_orchestrator
-|-- config        RabbitMQ configuration
-|-- controller    REST API controllers
-|-- dto           Request and response DTOs
-|-- entity        JPA entities
-|-- enums         Task status and event type enums
-|-- mq            RabbitMQ producer, consumer, and message model
-|-- repository    Spring Data JPA repositories
-|-- service       Task business logic and execution simulation
-`-- state         Task state machine
-```
+## 九、当前版本进度
 
-## Next Steps
+当前已完成：
 
-Planned improvements for the next version:
+- V0.1 创建任务
+- V0.2 查询任务
+- V0.3 状态机
+- V0.4 任务事件表
+- V0.4.1 Flyway
+- V0.5 RabbitMQ 异步调度
+- V0.6 Consumer 模拟执行
+- V0.7 失败处理
+- V0.8 重试机制
+- V0.9 幂等与重复消费控制
+- V0.10 取消与超时
+- V0.11 本地开发环境
 
-- Move local credentials to environment variables or profiles.
-- Ignore generated build output such as `target/`.
-- Add unit tests for the task state machine and task service.
-- Add safer transaction handling for database writes and RabbitMQ dispatch.
-- Add failure handling for task execution.
+## 十、后续规划
+
+后续可能扩展：
+
+- Spring Boot 应用容器化
+- Actuator / Prometheus / Grafana 可观测性
+- LLM Client 抽象
+- Prompt Template
+- Token Usage 成本统计
+- Streaming Output
+- RAG
+- Tool Calling
+- Agent Runtime
+- Evaluation Harness
+- KV Cache-aware Scheduling
+
+以上内容属于后续规划，当前版本尚未实现 LLM / RAG / Agent / KV Cache 等能力。
+
+## 十一、项目定位说明
+
+当前项目重点不是“调大模型 API”，而是先构建 AI 任务平台需要的可靠工程底座：
+
+- 状态管理
+- 异步调度
+- 失败恢复
+- 幂等控制
+- 可观测事件
+- 本地环境工程化
