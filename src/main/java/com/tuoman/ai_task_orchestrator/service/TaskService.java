@@ -37,6 +37,7 @@ public class TaskService {
     public CreateTaskResponse createTask(CreateTaskRequest request) {
         TaskEntity task = new TaskEntity();
         task.setPrompt(request.getPrompt());
+        task.setRequestedModel(request.getModel());
         task.setStatus(TaskStatus.PENDING);
         task.setRetryCount(0);
         task.setMaxRetry(3);
@@ -380,6 +381,7 @@ public class TaskService {
         return new TaskDetailResponse(
                 task.getId(),
                 task.getPrompt(),
+                task.getRequestedModel(),
                 task.getStatus(),
                 task.getErrorMessage(),
                 task.getRetryCount(),

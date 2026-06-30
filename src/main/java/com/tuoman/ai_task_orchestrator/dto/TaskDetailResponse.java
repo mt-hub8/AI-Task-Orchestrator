@@ -14,6 +14,8 @@ public class TaskDetailResponse {
 
     private String prompt;
 
+    private String requestedModel;
+
     private TaskStatus status;
 
     private String errorMessage;

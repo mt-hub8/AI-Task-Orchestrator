@@ -1,9 +1,11 @@
 package com.tuoman.ai_task_orchestrator.service;
 
+import com.tuoman.ai_task_orchestrator.dto.TaskDetailResponse;
 import com.tuoman.ai_task_orchestrator.entity.PromptTemplateEntity;
 import com.tuoman.ai_task_orchestrator.llm.LlmClient;
 import com.tuoman.ai_task_orchestrator.llm.LlmRequest;
 import com.tuoman.ai_task_orchestrator.llm.LlmResponse;
+import com.tuoman.ai_task_orchestrator.llm.ModelRouter;
 import com.tuoman.ai_task_orchestrator.prompt.PromptTemplateRenderer;
 import com.tuoman.ai_task_orchestrator.repository.PromptTemplateRepository;
 import lombok.RequiredArgsConstructor;
@@ -19,11 +21,11 @@ public class TaskExecutionService {
 
     private static final String DEFAULT_TEMPLATE_CODE = "default_task_prompt";
 
-    private static final String DEFAULT_MODEL = "mock-llm";
-
     private final TaskService taskService;
 
     private final LlmClient llmClient;
+
+    private final ModelRouter modelRouter;
 
     private final PromptTemplateRepository promptTemplateRepository;
 
@@ -49,7 +51,9 @@ public class TaskExecutionService {
                 return;
             }
 
-            String prompt = taskService.getTaskById(taskId).getPrompt();
+            TaskDetailResponse task = taskService.getTaskById(taskId);
+            String prompt = task.getPrompt();
+            String selectedModel = modelRouter.route(task.getRequestedModel());
             log.info("Find prompt template, taskId={}, templateCode={}", taskId, DEFAULT_TEMPLATE_CODE);
             PromptTemplateEntity template = promptTemplateRepository
                     .findByTemplateCodeAndEnabledTrue(DEFAULT_TEMPLATE_CODE)
@@ -60,7 +64,7 @@ public class TaskExecutionService {
             Map<String, String> variables = Map.of(
                     "prompt", prompt == null ? "" : prompt,
                     "taskId", String.valueOf(taskId),
-                    "model", DEFAULT_MODEL
+                    "model", selectedModel
             );
             String renderedPrompt = promptTemplateRenderer.render(template.getTemplateContent(), variables);
             log.info("Prompt template rendered, taskId={}, templateCode={}, renderedPromptLength={}",
@@ -71,7 +75,7 @@ public class TaskExecutionService {
             LlmRequest request = new LlmRequest();
             request.setTaskId(taskId);
             request.setPrompt(renderedPrompt);
-            request.setModel(DEFAULT_MODEL);
+            request.setModel(selectedModel);
 
             log.info("Calling LlmClient, taskId={}, model={}", taskId, request.getModel());
             LlmResponse response = llmClient.generate(request);

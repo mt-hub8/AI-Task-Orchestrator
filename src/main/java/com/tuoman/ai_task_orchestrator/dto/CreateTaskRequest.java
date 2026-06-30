@@ -11,4 +11,6 @@ public class CreateTaskRequest {
     @NotBlank(message = "prompt不能为空")
     private String prompt;
 
+    private String model;
+
 }

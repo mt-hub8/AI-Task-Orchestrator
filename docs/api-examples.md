@@ -1,5 +1,36 @@
 # API 验收文档
 
+## V1.3 Model Router 验收补充
+
+创建任务时可以传入 `model`：
+
+```json
+{
+  "prompt": "normal task",
+  "model": "mock-fast"
+}
+```
+
+期望：
+
+- `requestedModel = mock-fast`
+- `llmModel = mock-fast`
+- `status = SUCCESS`
+- `resultContent` 不为空
+- `renderedPrompt` 不为空
+
+不传 `model` 时，期望 `requestedModel = null`，`llmModel = mock-llm`。
+
+传入未知模型时，期望 `requestedModel = unknown-model`，`llmModel = mock-llm`，`status = SUCCESS`。
+
+```sql
+SELECT id, prompt, requested_model, status, llm_model, result_content, rendered_prompt
+FROM task
+WHERE id = 你的任务ID;
+```
+
+当前 Model Router 只支持 Mock 模型路由，尚未实现真实多 Provider、真实成本路由、延迟路由、负载感知路由或 KV Cache-aware Scheduling。
+
 ## 一、文档目的
 
 本文档用于记录 AI Task Orchestrator 当前阶段的 API 调用示例和验收方式，重点覆盖 Prompt Template、Mock LLM、LLM metadata 与 token usage 记录。

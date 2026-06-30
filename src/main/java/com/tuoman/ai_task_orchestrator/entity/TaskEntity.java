@@ -20,6 +20,9 @@ public class TaskEntity {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String prompt;
 
+    @Column(name = "requested_model", length = 100)
+    private String requestedModel;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
     private TaskStatus status;

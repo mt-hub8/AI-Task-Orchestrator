@@ -1,5 +1,15 @@
 # 简历与面试表达文档
 
+## V1.3 Model Router 面试表达补充
+
+当前项目已经把用户请求模型和实际执行模型分开建模。创建任务时用户可以传入 `model`，系统保存为 `requestedModel`；执行阶段由 `ModelRouter` 选择实际执行模型，并把 selectedModel 用于 Prompt Template 变量和 `LlmRequest.model`。任务完成后，`GET /tasks/{taskId}` 可以同时看到用户请求的 `requestedModel` 和实际执行的 `llmModel`。
+
+当前支持的 Mock 模型包括 `mock-llm`、`mock-fast`、`mock-smart`。如果用户传入未知模型，系统会 fallback 到 `mock-llm`，避免因为模型名错误导致任务直接失败。
+
+简历可以补充：设计 `ModelRouter`，支持用户请求模型与实际执行模型分离，并在 Prompt Template 渲染和 LLM 请求构造阶段统一使用路由后的模型，为后续多 Provider 和策略路由打基础。
+
+当前边界：仍然只路由到 `MockLlmClient`；尚未接入真实 OpenAI / Claude / 本地模型 Provider；尚未实现真实成本路由、延迟路由、负载感知路由、上下文长度路由或 KV Cache-aware Scheduling。
+
 ## 一、项目一句话描述
 
 AI Task Orchestrator 是一个基于 Spring Boot、RabbitMQ、MySQL 和 Flyway 构建的异步 AI 任务编排系统，支持状态机、事件追踪、失败重试、幂等、取消、超时、Prompt Template 渲染、Mock LLM 调用、结果保存和 LLM usage 记录。

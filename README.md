@@ -1,5 +1,11 @@
 # AI Task Orchestrator
 
+## V1.3 Model Router 补充
+
+当前已实现 Model Router 闭环：创建任务时可以传入 `model`，系统保存为 `requestedModel`；执行阶段由 `ModelRouter` 选择实际模型，并把路由后的模型用于 Prompt Template 变量和 `LlmRequest.model`。当前支持 `mock-llm`、`mock-fast`、`mock-smart`，未知模型会 fallback 到 `mock-llm`。`GET /tasks/{taskId}` 可以同时看到用户请求的 `requestedModel` 和实际执行的 `llmModel`。
+
+当前 Model Router 仍然只路由到 `MockLlmClient`，尚未接入真实 OpenAI / Claude / 本地模型 Provider，也尚未实现基于成本、延迟、负载、上下文长度的真实路由和 KV Cache-aware Scheduling。
+
 ## 一、项目简介
 
 AI Task Orchestrator 是一个基于 Spring Boot 的 AI 任务编排与异步执行系统，用于模拟企业级 AI Agent / LLM 任务平台中的任务创建、异步调度、状态追踪、失败处理、重试、幂等、取消、超时控制、Prompt Template 渲染、Mock LLM 执行和 LLM usage 记录。

@@ -1,5 +1,24 @@
 # 项目结构说明
 
+## V1.3 Model Router 结构补充
+
+`llm` 包新增 `ModelRouter`，用于根据 `requestedModel` 选择实际执行模型。当前支持 `mock-llm`、`mock-fast`、`mock-smart`；为空时默认 `mock-llm`；未知模型记录 warn 日志并 fallback 到 `mock-llm`。
+
+执行链路补充：
+
+```text
+TaskExecutionService
+-> 读取 task.requestedModel
+-> ModelRouter.route(requestedModel)
+-> selectedModel
+-> PromptTemplateRenderer 使用 selectedModel 渲染 {{model}}
+-> LlmRequest.model = selectedModel
+-> MockLlmClient 返回 response.model
+-> TaskService 保存 llmModel
+```
+
+`TaskEntity` 新增 `requestedModel`，对应数据库字段 `requested_model`；`TaskDetailResponse` 返回 `requestedModel`，用于和实际执行模型 `llmModel` 对照。
+
 ## 一、文档目的
 
 本文档说明项目结构、核心包职责，以及任务从创建到 Prompt 渲染、Mock LLM 调用、usage 保存和状态流转的链路。
