@@ -2,7 +2,7 @@
 
 ## 一、文档目的
 
-本文档用于帮助开发者理解 AI Task Orchestrator 的项目结构、核心包职责、核心类职责，以及一次任务从 HTTP 创建到异步执行、LLM mock 调用、重试、取消和超时处理的完整调用链路。
+本文档用于帮助开发者理解 AI Task Orchestrator 的项目结构、核心包职责、核心类职责，以及一次任务从 HTTP 创建到异步执行、Prompt Template 渲染、Mock LLM 调用、重试、取消和超时处理的完整链路。
 
 ## 二、整体目录结构
 
@@ -15,6 +15,7 @@ src/main/java/com/tuoman/ai_task_orchestrator
 ├── enums
 ├── llm
 ├── mq
+├── prompt
 ├── repository
 ├── scheduler
 ├── service
@@ -35,52 +36,56 @@ docs
 
 ## 三、controller 包
 
-Controller 层负责接收 HTTP 请求，完成接口参数接收，并将业务处理委托给 Service 层。
+Controller 层负责接收 HTTP 请求。
 
-`TaskController` 是任务主接口控制器，包含：
+`TaskController` 包含：
 
-- `POST /tasks`：创建任务。
-- `GET /tasks/{taskId}`：查询任务详情。
-- `PATCH /tasks/{taskId}/status`：手动更新任务状态。
-- `POST /tasks/{taskId}/cancel`：取消任务。
+- `POST /tasks`
+- `GET /tasks/{taskId}`
+- `PATCH /tasks/{taskId}/status`
+- `POST /tasks/{taskId}/cancel`
 
-`DevTaskDispatchController` 是本地开发辅助控制器，包含：
+`DevTaskDispatchController` 包含：
 
-- `POST /dev/tasks/{taskId}/dispatch`：手动重复投递指定任务的 MQ 消息。
+- `POST /dev/tasks/{taskId}/dispatch`
 
 该接口仅用于本地开发测试重复投递，不是生产接口。
 
 ## 四、dto 包
 
-DTO 用于接口入参和出参，隔离数据库 Entity 和 HTTP API，避免直接把持久化模型暴露给外部调用方。
+DTO 用于接口入参和出参，隔离 Entity 和 HTTP API。
 
-- `CreateTaskRequest`：创建任务请求体，包含任务 prompt。
-- `CreateTaskResponse`：创建任务响应体，返回任务 ID 和初始状态。
-- `TaskDetailResponse`：任务详情响应体，返回任务状态、错误信息、重试字段、超时字段、LLM 结果字段和时间信息。
-- `UpdateTaskStatusRequest`：手动更新任务状态请求体。
-- `DevTaskDispatchResponse`：本地开发重复投递接口响应体。
+- `CreateTaskRequest`
+- `CreateTaskResponse`
+- `TaskDetailResponse`：返回状态、错误、重试、超时、LLM 结果、`renderedPrompt` 和 `promptTemplateCode`。
+- `UpdateTaskStatusRequest`
+- `DevTaskDispatchResponse`
 
 ## 五、entity 包
 
-Entity 负责映射数据库表，是 JPA 持久化层使用的对象。
+`TaskEntity` 对应 `task` 表，保存：
 
-`TaskEntity` 对应 `task` 表，用于保存任务当前状态和核心字段，包括：
+- 原始用户输入 `prompt`
+- 当前状态
+- 错误信息
+- 重试字段
+- 超时字段
+- LLM 结果字段：`resultContent`、`llmModel`
+- Prompt 渲染字段：`renderedPrompt`、`promptTemplateCode`
 
-- 任务 prompt。
-- 当前状态。
-- 错误信息。
-- 重试字段：`retryCount`、`maxRetry`、`nextRetryAt`。
-- 超时字段：`timeoutSeconds`、`timeoutAt`。
-- LLM 结果字段：`resultContent`、`llmModel`。
-- 创建时间和更新时间。
+`PromptTemplateEntity` 对应 `prompt_template` 表，保存：
 
-`TaskEventEntity` 对应 `task_event` 表，用于保存任务历史事件和状态变化，包括事件类型、原状态、目标状态、事件消息和创建时间。
+- `templateCode`
+- `templateName`
+- `templateContent`
+- `enabled`
+- 创建和更新时间
+
+`TaskEventEntity` 对应 `task_event` 表，保存任务历史事件和状态变化。
 
 ## 六、enums 包
 
-枚举用于表达系统中的有限状态和事件类型，让状态值和事件值保持可控。
-
-`TaskStatus` 表示任务状态：
+`TaskStatus`：
 
 - `PENDING`
 - `RUNNING`
@@ -89,21 +94,14 @@ Entity 负责映射数据库表，是 JPA 持久化层使用的对象。
 - `FAILED`
 - `CANCELLED`
 
-`TaskEventType` 表示任务事件类型：
+`TaskEventType`：
 
 - `TASK_CREATED`
 - `STATUS_CHANGED`
 
 ## 七、state 包
 
-状态机负责限制任务状态的合法流转，避免业务代码随意修改任务状态。
-
-`TaskStateMachine` 用于判断 `fromStatus -> toStatus` 是否允许。它可以防止非法流转，例如：
-
-- `SUCCESS -> RUNNING`
-- `FAILED -> RUNNING`
-
-当前主要合法流转：
+`TaskStateMachine` 负责限制任务状态合法流转，防止 `SUCCESS -> RUNNING`、`FAILED -> RUNNING` 等非法状态。
 
 ```text
 PENDING -> RUNNING
@@ -119,90 +117,68 @@ RETRY_PENDING -> CANCELLED
 
 ## 八、repository 包
 
-Repository 负责数据库访问，封装对任务表和任务事件表的查询与保存。
-
-`TaskRepository` 负责：
-
-- 查询任务。
-- 查询到期重试任务。
-- 查询超时 `RUNNING` 任务。
-
-`TaskEventRepository` 负责：
-
-- 保存任务事件。
+- `TaskRepository`：查询任务、到期重试任务、超时 RUNNING 任务。
+- `TaskEventRepository`：保存任务事件。
+- `PromptTemplateRepository`：根据 `templateCode` 查询启用中的 Prompt Template。
 
 ## 九、mq 包
 
-MQ 层负责 RabbitMQ 消息投递和消费。当前 RabbitMQ 基础配置类位于 `config` 包，消息模型、生产者和消费者位于 `mq` 包。
+MQ 层负责 RabbitMQ 消息投递和消费。
 
-`RabbitMQConfig` 负责定义 exchange、queue、binding 和 message converter。
+- `RabbitMQConfig`：定义 exchange、queue、binding、message converter。
+- `TaskDispatchMessage`：MQ 消息体。
+- `TaskDispatchProducer`：发送任务调度消息。
+- `TaskDispatchConsumer`：接收任务调度消息并调用 `TaskExecutionService`。
 
-`TaskDispatchMessage` 是 MQ 消息体，用于承载需要调度执行的任务 ID。
+## 十、prompt 包
 
-`TaskDispatchProducer` 负责发送任务调度消息。
+`prompt` 包负责 Prompt Template 渲染。
 
-`TaskDispatchConsumer` 负责接收任务调度消息，并调用 `TaskExecutionService` 执行任务。
+- `PromptTemplateRenderer`：将模板中的 `{{prompt}}`、`{{ taskId }}`、`{{model}}` 等变量替换成实际值。
 
-## 十、llm 包
+当前已接入任务执行链路，但尚未提供 Prompt Template CRUD API。
+
+## 十一、llm 包
 
 `llm` 包负责 LLM 调用抽象和模拟实现。
 
 - `LlmClient`：统一 LLM 调用接口。
-- `LlmRequest`：LLM 请求对象，包含 `taskId`、`prompt`、`model`。
-- `LlmResponse`：LLM 响应对象，包含 `taskId`、`model`、`content`、`success`、`errorMessage`。
-- `MockLlmClient`：模拟 LLM Provider，不调用外部 API，用于本地开发和流程验证。
+- `LlmRequest`：包含 `taskId`、`prompt`、`model`。其中 `prompt` 当前使用 `renderedPrompt`。
+- `LlmResponse`：包含 `taskId`、`model`、`content`、`success`、`errorMessage`。
+- `MockLlmClient`：模拟 LLM Provider，不调用外部 API。
 
-当前系统只接入 `MockLlmClient`，尚未接入真实 OpenAI / Claude / 本地模型 Provider。
-
-## 十一、service 包
-
-Service 层承载核心业务逻辑，是任务生命周期控制的主要位置。
+## 十二、service 包
 
 `TaskService` 负责：
 
-- 创建任务。
-- 查询任务。
-- 状态流转。
-- 记录 `task_event`。
-- 标记失败。
-- 标记重试等待。
-- 标记成功并保存 `resultContent` / `llmModel`。
-- 尝试开始执行：`tryStartTaskExecution`。
-- 取消任务。
-- 判断取消状态和运行状态。
-- 标记超时。
+- 创建任务
+- 查询任务
+- 状态流转
+- 记录 `task_event`
+- 标记失败
+- 标记重试等待
+- 标记成功并保存 `resultContent` / `llmModel` / `renderedPrompt` / `promptTemplateCode`
+- 取消任务
+- 标记超时
 
 `TaskExecutionService` 负责：
 
-- 接收 Consumer 触发的任务执行。
-- 调用 `tryStartTaskExecution` 做入口幂等保护。
-- 构造 `LlmRequest`。
-- 调用 `LlmClient.generate(...)`。
-- 当前默认由 `MockLlmClient` 返回模拟 LLM 结果。
-- 成功后保存 `resultContent` / `llmModel`。
-- 失败后进入 `RETRY_PENDING` 或 `FAILED`。
-- 协作式取消检查。
-- 避免覆盖已取消或已超时任务。
+- 入口幂等保护
+- 协作式取消检查
+- 查询 `default_task_prompt`
+- 使用 `PromptTemplateRenderer` 渲染 `renderedPrompt`
+- 构造 `LlmRequest`
+- 调用 `LlmClient.generate(...)`
+- 成功后保存结果和渲染信息
+- 失败后进入重试或最终失败
+- 避免覆盖已取消或已超时任务
 
-## 十二、scheduler 包
+## 十三、scheduler 包
 
-Scheduler 负责后台定时扫描，把异步任务的重试和超时处理从 HTTP 请求链路中拆出来。
+- `TaskRetryScheduler`：扫描 `RETRY_PENDING` 且 `nextRetryAt` 到期的任务，重新投递 MQ。
+- `TaskTimeoutScheduler`：扫描 `RUNNING` 且 `timeoutAt` 到期的任务，标记为 `FAILED`。
 
-`TaskRetryScheduler` 负责：
-
-- 扫描 `RETRY_PENDING` 且 `nextRetryAt` 到期的任务。
-- 重新投递 MQ。
-- 推迟 `nextRetryAt`，避免短时间重复投递同一个任务。
-
-`TaskTimeoutScheduler` 负责：
-
-- 扫描 `RUNNING` 且 `timeoutAt` 到期的任务。
-- 将任务标记为 `FAILED`。
-- 设置 `errorMessage = 任务执行超时`。
-
-## 十三、resources/db/migration
-
-`resources/db/migration` 目录由 Flyway 管理，用迁移脚本维护数据库结构版本。
+## 十四、resources/db/migration
 
 当前迁移脚本包括：
 
@@ -212,8 +188,10 @@ Scheduler 负责后台定时扫描，把异步任务的重试和超时处理从 
 - `V4__add_retry_fields_to_task.sql`
 - `V5__add_timeout_fields_to_task.sql`
 - `V6__add_llm_result_fields_to_task.sql`
+- `V7__create_prompt_template_table.sql`
+- `V8__add_prompt_render_fields_to_task.sql`
 
-## 十四、一次任务完整执行链路
+## 十五、一次任务完整执行链路
 
 ```text
 1. 用户调用 POST /tasks
@@ -224,50 +202,49 @@ Scheduler 负责后台定时扫描，把异步任务的重试和超时处理从 
 6. TaskDispatchConsumer 收到消息
 7. TaskExecutionService 调用 tryStartTaskExecution
 8. PENDING / RETRY_PENDING -> RUNNING
-9. TaskExecutionService 构造 LlmRequest
-10. TaskExecutionService 调用 LlmClient.generate
-11. MockLlmClient 返回 LlmResponse
-12. 成功：保存 resultContent / llmModel，RUNNING -> SUCCESS
-13. 失败可重试：RUNNING -> RETRY_PENDING
-14. RetryScheduler 到期重新投递
-15. 重试耗尽：RUNNING -> FAILED
-16. 用户取消：进入 CANCELLED
-17. TimeoutScheduler 超时：RUNNING -> FAILED
+9. 查询 default_task_prompt
+10. PromptTemplateRenderer 渲染 renderedPrompt
+11. 构造 LlmRequest，prompt = renderedPrompt
+12. 调用 LlmClient.generate
+13. MockLlmClient 返回 LlmResponse
+14. 成功：保存 resultContent / llmModel / renderedPrompt / promptTemplateCode
+15. RUNNING -> SUCCESS
+16. 失败可重试：RUNNING -> RETRY_PENDING
+17. RetryScheduler 到期重新投递
+18. 重试耗尽：RUNNING -> FAILED
+19. 用户取消：进入 CANCELLED
+20. TimeoutScheduler 超时：RUNNING -> FAILED
 ```
 
-## 十五、当前架构边界
-
-当前项目已经实现的是 AI 任务平台的可靠任务编排底座，并接入了 Mock LLM 执行链路。
+## 十六、当前架构边界
 
 当前已实现：
 
-- 任务生命周期
-- 异步调度
+- 可靠任务生命周期
+- RabbitMQ 异步调度
 - 状态机
 - 事件记录
-- 失败处理
-- 重试
-- 幂等
-- 取消
-- 超时
+- 失败处理和重试
+- 幂等、取消、超时
 - `LlmClient` 抽象
 - `MockLlmClient`
-- LLM mock 调用结果保存
-- 本地环境工程化
+- Prompt Template 数据模型
+- Prompt Template 渲染器
+- 执行链路使用 `default_task_prompt`
+- 保存 `renderedPrompt` / `promptTemplateCode`
 
 当前未实现：
 
 - 真实 OpenAI / Claude / 本地模型 Provider
-- Prompt Template
+- Prompt Template CRUD API
 - Token Usage
 - Streaming Output
 - RAG
 - Tool Calling
 - Agent Runtime
-- Evaluation Harness
 - KV Cache-aware Scheduling
 
-## 十六、相关文档
+## 十七、相关文档
 
 - [README.md](../README.md)
 - [docs/local-dev.md](local-dev.md)

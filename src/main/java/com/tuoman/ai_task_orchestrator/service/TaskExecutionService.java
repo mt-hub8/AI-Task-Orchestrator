@@ -96,7 +96,13 @@ public class TaskExecutionService {
                 return;
             }
 
-            taskService.markTaskSucceeded(taskId, response.getContent(), response.getModel());
+            taskService.markTaskSucceeded(
+                    taskId,
+                    response.getContent(),
+                    response.getModel(),
+                    renderedPrompt,
+                    DEFAULT_TEMPLATE_CODE
+            );
 
             log.info("Finish executing task, taskId={}", taskId);
         } catch (Exception e) {

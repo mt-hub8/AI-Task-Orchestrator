@@ -2,9 +2,9 @@
 
 ## 一、项目简介
 
-AI Task Orchestrator 是一个基于 Spring Boot 的 AI 任务编排与异步执行系统，用于模拟企业级 AI Agent / LLM 任务平台中的任务创建、异步调度、状态追踪、失败处理、重试、幂等、取消、超时控制和 LLM 执行流程。
+AI Task Orchestrator 是一个基于 Spring Boot 的 AI 任务编排与异步执行系统，用于模拟企业级 AI Agent / LLM 任务平台中的任务创建、异步调度、状态追踪、失败处理、重试、幂等、取消、超时控制、Prompt Template 渲染和 Mock LLM 执行流程。
 
-当前项目已经接入 `MockLlmClient`，用于模拟 LLM 执行成功与失败，并保存模型名和输出结果。项目尚未接入真实 OpenAI / Claude / 本地模型 Provider，当前重点仍然是构建可靠的 AI 任务编排底座。
+当前系统已经实现 Prompt Template 执行闭环：任务执行时使用 `default_task_prompt` 渲染最终 Prompt，`LlmRequest.prompt` 使用渲染后的 `renderedPrompt`，并保存 `renderedPrompt` / `promptTemplateCode` / `resultContent` / `llmModel`。当前仍然只使用 `MockLlmClient`，尚未接入真实 OpenAI / Claude / 本地模型 Provider。
 
 ## 二、项目要解决的问题
 
@@ -15,7 +15,8 @@ AI Task Orchestrator 是一个基于 Spring Boot 的 AI 任务编排与异步执
 - MQ 重复投递需要有幂等保护。
 - 用户需要能够取消任务。
 - 任务执行不能无限卡住，需要超时控制。
-- LLM 执行结果需要能追踪和查询。
+- Prompt Template 需要把用户输入渲染成最终 LLM Prompt。
+- LLM 执行结果、实际 Prompt 和模板编码需要能追踪和查询。
 - 本地开发环境需要可复现、可快速启动。
 
 ## 三、当前已实现能力
@@ -31,15 +32,16 @@ AI Task Orchestrator 是一个基于 Spring Boot 的 AI 任务编排与异步执
 - 自动重试：`retryCount` / `maxRetry` / `nextRetryAt`
 - Consumer 入口幂等保护
 - Scheduler 重复投递保护
-- 开发测试重复投递接口
-- 取消任务接口：`POST /tasks/{taskId}/cancel`
-- `RUNNING` 任务协作式取消
-- 超时字段：`timeoutSeconds` / `timeoutAt`
-- 超时扫描器
+- 取消任务与协作式取消
+- 超时字段与超时扫描器
 - `LlmClient` 抽象
 - `MockLlmClient`
-- `TaskExecutionService` 调用 `LlmClient`
-- 保存 LLM 执行结果：`resultContent` / `llmModel`
+- Prompt Template 数据模型
+- `PromptTemplateRenderer`
+- `TaskExecutionService` 使用 `default_task_prompt` 渲染最终 Prompt
+- `LlmRequest.prompt` 使用 `renderedPrompt`
+- 保存 `resultContent` / `llmModel`
+- 保存 `renderedPrompt` / `promptTemplateCode`
 - Docker Compose 本地 MySQL / RabbitMQ 环境
 
 ## 四、技术栈
@@ -64,10 +66,14 @@ AI Task Orchestrator 是一个基于 Spring Boot 的 AI 任务编排与异步执
 -> 发送 RabbitMQ 消息
 -> Consumer 接收消息
 -> PENDING / RETRY_PENDING -> RUNNING
+-> 查询 default_task_prompt
+-> PromptTemplateRenderer 渲染 renderedPrompt
 -> TaskExecutionService 构造 LlmRequest
+-> LlmRequest.prompt = renderedPrompt
 -> 调用 LlmClient.generate
 -> MockLlmClient 返回 LlmResponse
--> 成功：保存 result_content / llm_model，RUNNING -> SUCCESS
+-> 成功：保存 result_content / llm_model / rendered_prompt / prompt_template_code
+-> RUNNING -> SUCCESS
 -> 失败可重试：RUNNING -> RETRY_PENDING
 -> Scheduler 到期重新投递
 -> 重试耗尽：RUNNING -> FAILED
@@ -76,8 +82,6 @@ AI Task Orchestrator 是一个基于 Spring Boot 的 AI 任务编排与异步执
 ```
 
 ## 六、状态流转
-
-当前合法主流程：
 
 ```text
 PENDING -> RUNNING
@@ -101,15 +105,8 @@ RETRY_PENDING -> CANCELLED
 docs/local-dev.md
 ```
 
-启动 MySQL / RabbitMQ：
-
 ```powershell
 docker compose up -d
-```
-
-PowerShell 启动 Spring Boot：
-
-```powershell
 .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=docker"
 ```
 
@@ -125,8 +122,6 @@ PowerShell 启动 Spring Boot：
 
 ## 九、当前版本进度
 
-当前已完成：
-
 - V0.1 创建任务
 - V0.2 查询任务
 - V0.3 状态机
@@ -140,13 +135,13 @@ PowerShell 启动 Spring Boot：
 - V0.10 取消与超时
 - V0.11 本地开发环境与文档
 - V1.0 LLM Client 抽象、MockLlmClient、任务执行链路接入和结果保存
+- V1.1 Prompt Template 数据模型、渲染器、执行接入和 renderedPrompt 保存
 
 ## 十、后续规划
 
-后续可能扩展：
-
+- Prompt Template CRUD API
 - 真实 OpenAI / Claude / 本地模型 Provider
-- Prompt Template
+- API Key 配置与安全管理
 - Token Usage 成本统计
 - Streaming Output
 - RAG
@@ -154,20 +149,20 @@ PowerShell 启动 Spring Boot：
 - Agent Runtime
 - Evaluation Harness
 - KV Cache-aware Scheduling
-- Spring Boot 应用容器化
 - Actuator / Prometheus / Grafana 可观测性
 
-以上内容属于后续规划，当前版本尚未接入真实大模型 API，也尚未实现 RAG / Agent / KV Cache 等能力。
+当前尚未接入真实大模型 API，尚未实现 Prompt Template CRUD，也尚未实现 Token Usage / Streaming / RAG / Agent / KV Cache。
 
 ## 十一、项目定位说明
 
-当前项目重点不是直接“调大模型 API”，而是先构建 AI 任务平台需要的可靠工程底座：
+当前项目重点不是直接“调大模型 API”，而是构建 AI 任务平台需要的可靠工程底座：
 
 - 状态管理
 - 异步调度
 - 失败恢复
 - 幂等控制
 - 可观测事件
+- Prompt Template 渲染
 - Mock LLM 执行链路
-- LLM 结果保存
+- LLM 结果和实际 Prompt 追踪
 - 本地环境工程化

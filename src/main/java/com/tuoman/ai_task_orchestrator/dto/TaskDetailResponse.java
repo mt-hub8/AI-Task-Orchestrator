@@ -32,6 +32,10 @@ public class TaskDetailResponse {
 
     private String llmModel;
 
+    private String renderedPrompt;
+
+    private String promptTemplateCode;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

@@ -48,6 +48,12 @@ public class TaskEntity {
     @Column(name = "llm_model", length = 100)
     private String llmModel;
 
+    @Column(name = "rendered_prompt", columnDefinition = "TEXT")
+    private String renderedPrompt;
+
+    @Column(name = "prompt_template_code", length = 100)
+    private String promptTemplateCode;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

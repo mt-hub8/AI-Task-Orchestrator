@@ -159,7 +159,13 @@ public class TaskService {
     }
 
     @Transactional
-    public TaskDetailResponse markTaskSucceeded(Long taskId, String resultContent, String llmModel) {
+    public TaskDetailResponse markTaskSucceeded(
+            Long taskId,
+            String resultContent,
+            String llmModel,
+            String renderedPrompt,
+            String promptTemplateCode
+    ) {
         TaskEntity task = findTaskOrThrow(taskId);
         TaskStatus currentStatus = task.getStatus();
         TaskStatus targetStatus = TaskStatus.SUCCESS;
@@ -174,6 +180,8 @@ public class TaskService {
         task.setStatus(targetStatus);
         task.setResultContent(resultContent);
         task.setLlmModel(llmModel);
+        task.setRenderedPrompt(renderedPrompt);
+        task.setPromptTemplateCode(promptTemplateCode);
         task.setNextRetryAt(null);
         task.setErrorMessage(null);
 
@@ -361,6 +369,8 @@ public class TaskService {
                 task.getTimeoutAt(),
                 task.getResultContent(),
                 task.getLlmModel(),
+                task.getRenderedPrompt(),
+                task.getPromptTemplateCode(),
                 task.getCreatedAt(),
                 task.getUpdatedAt()
         );
