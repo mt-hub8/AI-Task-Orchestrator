@@ -3,6 +3,8 @@ package com.tuoman.ai_task_orchestrator.service;
 import com.tuoman.ai_task_orchestrator.dto.DocumentChunkResponse;
 import com.tuoman.ai_task_orchestrator.dto.DocumentDetailResponse;
 import com.tuoman.ai_task_orchestrator.dto.DocumentUploadResponse;
+import com.tuoman.ai_task_orchestrator.document.DocumentChunkResult;
+import com.tuoman.ai_task_orchestrator.document.DocumentChunker;
 import com.tuoman.ai_task_orchestrator.entity.DocumentChunkEntity;
 import com.tuoman.ai_task_orchestrator.entity.DocumentEntity;
 import com.tuoman.ai_task_orchestrator.enums.DocumentStatus;
@@ -23,11 +25,11 @@ import java.util.List;
 @RequiredArgsConstructor
 public class DocumentService {
 
-    private static final int CHUNK_SIZE = 500;
-
     private final DocumentRepository documentRepository;
 
     private final DocumentChunkRepository documentChunkRepository;
+
+    private final DocumentChunker documentChunker;
 
     @Transactional(noRollbackFor = ResponseStatusException.class)
     public DocumentUploadResponse uploadDocument(MultipartFile file) {
@@ -44,17 +46,19 @@ public class DocumentService {
 
         try {
             String content = new String(file.getBytes(), StandardCharsets.UTF_8);
-            List<String> chunks = splitIntoChunks(content, CHUNK_SIZE);
+            List<DocumentChunkResult> chunks = documentChunker.chunk(content);
             List<DocumentChunkEntity> chunkEntities = new ArrayList<>();
 
-            for (int i = 0; i < chunks.size(); i++) {
-                String chunkContent = chunks.get(i);
-
+            for (DocumentChunkResult chunkResult : chunks) {
                 DocumentChunkEntity chunk = new DocumentChunkEntity();
                 chunk.setDocumentId(savedDocument.getId());
-                chunk.setChunkIndex(i);
-                chunk.setContent(chunkContent);
-                chunk.setContentLength(chunkContent.length());
+                chunk.setChunkIndex(chunkResult.getChunkIndex());
+                chunk.setContent(chunkResult.getContent());
+                chunk.setContentLength(chunkResult.getContentLength());
+                chunk.setChunkStrategy(chunkResult.getChunkStrategy());
+                chunk.setStartOffset(chunkResult.getStartOffset());
+                chunk.setEndOffset(chunkResult.getEndOffset());
+                chunk.setHeadingPath(chunkResult.getHeadingPath());
                 chunkEntities.add(chunk);
             }
 
@@ -86,21 +90,6 @@ public class DocumentService {
                 .stream()
                 .map(this::toChunkResponse)
                 .toList();
-    }
-
-    List<String> splitIntoChunks(String content, int chunkSize) {
-        if (content == null || content.isBlank()) {
-            return List.of();
-        }
-
-        List<String> chunks = new ArrayList<>();
-
-        for (int start = 0; start < content.length(); start += chunkSize) {
-            int end = Math.min(start + chunkSize, content.length());
-            chunks.add(content.substring(start, end));
-        }
-
-        return chunks;
     }
 
     private void validateFile(MultipartFile file) {
@@ -154,6 +143,10 @@ public class DocumentService {
                 chunk.getChunkIndex(),
                 chunk.getContent(),
                 chunk.getContentLength(),
+                chunk.getChunkStrategy(),
+                chunk.getStartOffset(),
+                chunk.getEndOffset(),
+                chunk.getHeadingPath(),
                 chunk.getCreatedAt()
         );
     }

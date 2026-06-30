@@ -1,17 +1,11 @@
-package com.tuoman.ai_task_orchestrator.dto;
+package com.tuoman.ai_task_orchestrator.document;
 
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-import java.time.LocalDateTime;
-
 @Getter
 @AllArgsConstructor
-public class DocumentChunkResponse {
-
-    private Long id;
-
-    private Long documentId;
+public class DocumentChunkResult {
 
     private Integer chunkIndex;
 
@@ -26,6 +20,4 @@ public class DocumentChunkResponse {
     private Integer endOffset;
 
     private String headingPath;
-
-    private LocalDateTime createdAt;
 }

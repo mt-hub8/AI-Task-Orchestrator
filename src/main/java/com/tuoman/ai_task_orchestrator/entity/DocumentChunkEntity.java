@@ -28,6 +28,18 @@ public class DocumentChunkEntity {
     @Column(name = "content_length", nullable = false)
     private Integer contentLength;
 
+    @Column(name = "chunk_strategy", length = 100)
+    private String chunkStrategy;
+
+    @Column(name = "start_offset")
+    private Integer startOffset;
+
+    @Column(name = "end_offset")
+    private Integer endOffset;
+
+    @Column(name = "heading_path", length = 500)
+    private String headingPath;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
