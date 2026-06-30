@@ -37,4 +37,19 @@ public interface TaskRepository extends JpaRepository<TaskEntity, Long> {
             @Param("timeoutAt") LocalDateTime timeoutAt,
             @Param("allowedStatuses") Collection<TaskStatus> allowedStatuses
     );
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            update TaskEntity t
+            set t.nextRetryAt = :reservedUntil
+            where t.id = :taskId
+              and t.status = :status
+              and t.nextRetryAt <= :now
+            """)
+    int reserveRetryDispatch(
+            @Param("taskId") Long taskId,
+            @Param("status") TaskStatus status,
+            @Param("now") LocalDateTime now,
+            @Param("reservedUntil") LocalDateTime reservedUntil
+    );
 }

@@ -2,12 +2,13 @@ package com.tuoman.ai_task_orchestrator.scheduler;
 
 import com.tuoman.ai_task_orchestrator.entity.TaskEntity;
 import com.tuoman.ai_task_orchestrator.enums.TaskStatus;
-import com.tuoman.ai_task_orchestrator.mq.TaskDispatchProducer;
 import com.tuoman.ai_task_orchestrator.repository.TaskRepository;
+import com.tuoman.ai_task_orchestrator.service.TaskOutboxService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -19,8 +20,9 @@ public class TaskRetryScheduler {
 
     private final TaskRepository taskRepository;
 
-    private final TaskDispatchProducer taskDispatchProducer;
+    private final TaskOutboxService taskOutboxService;
 
+    @Transactional
     @Scheduled(fixedDelay = 5000)
     public void dispatchRetryTasks() {
         List<TaskEntity> tasks = taskRepository.findTop20ByStatusAndNextRetryAtLessThanEqualOrderByNextRetryAtAsc(
@@ -32,17 +34,30 @@ public class TaskRetryScheduler {
 
         for (TaskEntity task : tasks) {
             try {
-                log.info("Resend retry task message, taskId={}", task.getId());
-                taskDispatchProducer.sendTaskCreatedMessage(task.getId());
-
-                LocalDateTime nextRetryAt = LocalDateTime.now().plusSeconds(30);
-                task.setNextRetryAt(nextRetryAt);
-                taskRepository.save(task);
-
-                log.info("Retry task message resent, taskId={}, nextRetryAt postponed to {}", task.getId(), nextRetryAt);
+                reserveRetryTaskAndCreateOutbox(task.getId());
             } catch (Exception e) {
-                log.error("Failed to resend retry task message, taskId={}", task.getId(), e);
+                log.error("Failed to create retry task outbox, taskId={}", task.getId(), e);
             }
         }
+    }
+
+    @Transactional
+    public void reserveRetryTaskAndCreateOutbox(Long taskId) {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime reservedUntil = now.plusSeconds(30);
+        int reserved = taskRepository.reserveRetryDispatch(
+                taskId,
+                TaskStatus.RETRY_PENDING,
+                now,
+                reservedUntil
+        );
+
+        if (reserved != 1) {
+            log.info("Skip retry task because reserve failed, taskId={}", taskId);
+            return;
+        }
+
+        taskOutboxService.createTaskDispatchOutbox(taskId);
+        log.info("Retry task outbox created, taskId={}, nextRetryAt postponed to {}", taskId, reservedUntil);
     }
 }
