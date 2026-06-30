@@ -23,6 +23,8 @@ public class TaskExecutionService {
 
     private final TaskService taskService;
 
+    private final TaskOutputChunkService taskOutputChunkService;
+
     private final LlmClient llmClient;
 
     private final ModelRouter modelRouter;
@@ -108,6 +110,13 @@ public class TaskExecutionService {
 
             if (!taskService.isTaskRunning(taskId)) {
                 log.info("Task is no longer running, skip marking success, taskId={}", taskId);
+                return;
+            }
+
+            taskOutputChunkService.saveChunks(taskId, response.getContent());
+
+            if (!taskService.isTaskRunning(taskId)) {
+                log.info("Task is no longer running, skip marking success after saving chunks, taskId={}", taskId);
                 return;
             }
 

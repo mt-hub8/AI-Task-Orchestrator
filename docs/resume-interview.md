@@ -1,5 +1,13 @@
 # 简历与面试表达文档
 
+## V1.4 Streaming Output 面试表达补充
+
+当前项目已经实现持久化增量输出：Mock LLM 成功返回完整内容后，`TaskExecutionService` 会把 content 拆分为多个 chunk，保存到 `task_output_chunk` 表，并提供 `GET /tasks/{taskId}/output-chunks` 查询接口。这样即使任务是异步执行，调用方也可以通过查询接口获取分片输出；完整结果仍然保存到 `resultContent`。
+
+简历可以补充：设计 `task_output_chunk` 增量输出表和查询接口，将 LLM 输出拆分为可持久化片段，为后续 polling、SSE 或 WebSocket 实时输出打基础。
+
+当前边界：这还不是真正 SSE / WebSocket，也不是 OpenAI / Claude 的真实 streaming provider；当前只做持久化增量输出闭环。
+
 ## V1.3 Model Router 面试表达补充
 
 当前项目已经把用户请求模型和实际执行模型分开建模。创建任务时用户可以传入 `model`，系统保存为 `requestedModel`；执行阶段由 `ModelRouter` 选择实际执行模型，并把 selectedModel 用于 Prompt Template 变量和 `LlmRequest.model`。任务完成后，`GET /tasks/{taskId}` 可以同时看到用户请求的 `requestedModel` 和实际执行的 `llmModel`。

@@ -1,5 +1,11 @@
 # AI Task Orchestrator
 
+## V1.4 Streaming Output 补充
+
+当前已实现持久化增量输出闭环：新增 `task_output_chunk` 表保存任务输出片段；`TaskExecutionService` 在 Mock LLM 成功返回后把完整 content 按固定长度拆成多个 chunk 保存；`GET /tasks/{taskId}/output-chunks` 可以按 `chunkIndex` 升序查询输出片段；最终 `resultContent` 仍然保存完整输出。
+
+当前版本不是 SSE / WebSocket，也没有接入真实 OpenAI / Claude streaming。它是异步任务系统下的“持久化增量输出 + 查询接口”，后续可以基于 `task_output_chunk` 扩展 polling、SSE 或 WebSocket。
+
 ## V1.3 Model Router 补充
 
 当前已实现 Model Router 闭环：创建任务时可以传入 `model`，系统保存为 `requestedModel`；执行阶段由 `ModelRouter` 选择实际模型，并把路由后的模型用于 Prompt Template 变量和 `LlmRequest.model`。当前支持 `mock-llm`、`mock-fast`、`mock-smart`，未知模型会 fallback 到 `mock-llm`。`GET /tasks/{taskId}` 可以同时看到用户请求的 `requestedModel` 和实际执行的 `llmModel`。

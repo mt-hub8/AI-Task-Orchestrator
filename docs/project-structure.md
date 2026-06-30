@@ -1,5 +1,27 @@
 # 项目结构说明
 
+## V1.4 Streaming Output 结构补充
+
+新增结构：
+
+- `TaskOutputChunkEntity`：映射 `task_output_chunk` 表。
+- `TaskOutputChunkRepository`：查询任务输出片段，按 `chunkIndex` 升序返回。
+- `TaskOutputChunkResponse`：输出片段响应 DTO。
+- `TaskOutputChunkService`：将完整 content 拆分为固定长度 chunk 并持久化，提供查询方法。
+- `GET /tasks/{taskId}/output-chunks`：查询某个任务的持久化增量输出。
+
+执行链路补充：
+
+```text
+MockLlmClient 返回成功 LlmResponse
+-> TaskExecutionService 确认任务仍然 RUNNING
+-> TaskOutputChunkService.saveChunks(taskId, content)
+-> task_output_chunk 按 chunkIndex 保存输出片段
+-> TaskService.markTaskSucceeded 保存完整 resultContent
+```
+
+当前不是 SSE / WebSocket，也没有真实 streaming provider；后续可以基于 `task_output_chunk` 扩展 polling、SSE 或 WebSocket。
+
 ## V1.3 Model Router 结构补充
 
 `llm` 包新增 `ModelRouter`，用于根据 `requestedModel` 选择实际执行模型。当前支持 `mock-llm`、`mock-fast`、`mock-smart`；为空时默认 `mock-llm`；未知模型记录 warn 日志并 fallback 到 `mock-llm`。
