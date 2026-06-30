@@ -2,9 +2,9 @@
 
 ## 一、项目简介
 
-AI Task Orchestrator 是一个基于 Spring Boot 的 AI 任务编排与异步执行系统，用于模拟企业级 AI Agent / LLM 任务平台中的任务创建、异步调度、状态追踪、失败处理、重试、幂等、取消和超时控制。
+AI Task Orchestrator 是一个基于 Spring Boot 的 AI 任务编排与异步执行系统，用于模拟企业级 AI Agent / LLM 任务平台中的任务创建、异步调度、状态追踪、失败处理、重试、幂等、取消、超时控制和 LLM 执行流程。
 
-当前阶段还没有真正接入 LLM、RAG、Agent，也没有实现模型推理能力。项目当前重点是先构建可靠的任务编排底座，为后续接入真实 AI 能力打好工程基础。
+当前项目已经接入 `MockLlmClient`，用于模拟 LLM 执行成功与失败，并保存模型名和输出结果。项目尚未接入真实 OpenAI / Claude / 本地模型 Provider，当前重点仍然是构建可靠的 AI 任务编排底座。
 
 ## 二、项目要解决的问题
 
@@ -15,6 +15,7 @@ AI Task Orchestrator 是一个基于 Spring Boot 的 AI 任务编排与异步执
 - MQ 重复投递需要有幂等保护。
 - 用户需要能够取消任务。
 - 任务执行不能无限卡住，需要超时控制。
+- LLM 执行结果需要能追踪和查询。
 - 本地开发环境需要可复现、可快速启动。
 
 ## 三、当前已实现能力
@@ -25,7 +26,7 @@ AI Task Orchestrator 是一个基于 Spring Boot 的 AI 任务编排与异步执
 - 事件日志：`task_event`
 - Flyway 数据库迁移
 - RabbitMQ 异步任务投递
-- Consumer 模拟任务执行
+- Consumer 接收任务消息
 - 失败处理与 `errorMessage`
 - 自动重试：`retryCount` / `maxRetry` / `nextRetryAt`
 - Consumer 入口幂等保护
@@ -35,6 +36,10 @@ AI Task Orchestrator 是一个基于 Spring Boot 的 AI 任务编排与异步执
 - `RUNNING` 任务协作式取消
 - 超时字段：`timeoutSeconds` / `timeoutAt`
 - 超时扫描器
+- `LlmClient` 抽象
+- `MockLlmClient`
+- `TaskExecutionService` 调用 `LlmClient`
+- 保存 LLM 执行结果：`resultContent` / `llmModel`
 - Docker Compose 本地 MySQL / RabbitMQ 环境
 
 ## 四、技术栈
@@ -46,6 +51,7 @@ AI Task Orchestrator 是一个基于 Spring Boot 的 AI 任务编排与异步执
 - MySQL
 - Flyway
 - RabbitMQ
+- Mock LLM Client
 - Docker Compose
 - Maven Wrapper
 - Lombok
@@ -58,8 +64,10 @@ AI Task Orchestrator 是一个基于 Spring Boot 的 AI 任务编排与异步执
 -> 发送 RabbitMQ 消息
 -> Consumer 接收消息
 -> PENDING / RETRY_PENDING -> RUNNING
--> 模拟执行
--> 成功：RUNNING -> SUCCESS
+-> TaskExecutionService 构造 LlmRequest
+-> 调用 LlmClient.generate
+-> MockLlmClient 返回 LlmResponse
+-> 成功：保存 result_content / llm_model，RUNNING -> SUCCESS
 -> 失败可重试：RUNNING -> RETRY_PENDING
 -> Scheduler 到期重新投递
 -> 重试耗尽：RUNNING -> FAILED
@@ -130,15 +138,14 @@ PowerShell 启动 Spring Boot：
 - V0.8 重试机制
 - V0.9 幂等与重复消费控制
 - V0.10 取消与超时
-- V0.11 本地开发环境
+- V0.11 本地开发环境与文档
+- V1.0 LLM Client 抽象、MockLlmClient、任务执行链路接入和结果保存
 
 ## 十、后续规划
 
 后续可能扩展：
 
-- Spring Boot 应用容器化
-- Actuator / Prometheus / Grafana 可观测性
-- LLM Client 抽象
+- 真实 OpenAI / Claude / 本地模型 Provider
 - Prompt Template
 - Token Usage 成本统计
 - Streaming Output
@@ -147,16 +154,20 @@ PowerShell 启动 Spring Boot：
 - Agent Runtime
 - Evaluation Harness
 - KV Cache-aware Scheduling
+- Spring Boot 应用容器化
+- Actuator / Prometheus / Grafana 可观测性
 
-以上内容属于后续规划，当前版本尚未实现 LLM / RAG / Agent / KV Cache 等能力。
+以上内容属于后续规划，当前版本尚未接入真实大模型 API，也尚未实现 RAG / Agent / KV Cache 等能力。
 
 ## 十一、项目定位说明
 
-当前项目重点不是“调大模型 API”，而是先构建 AI 任务平台需要的可靠工程底座：
+当前项目重点不是直接“调大模型 API”，而是先构建 AI 任务平台需要的可靠工程底座：
 
 - 状态管理
 - 异步调度
 - 失败恢复
 - 幂等控制
 - 可观测事件
+- Mock LLM 执行链路
+- LLM 结果保存
 - 本地环境工程化

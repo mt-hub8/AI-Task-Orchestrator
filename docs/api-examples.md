@@ -2,7 +2,7 @@
 
 ## 一、文档目的
 
-本文档用于记录 AI Task Orchestrator 当前阶段的 API 调用示例和验收方式，方便本地开发时验证任务创建、查询、状态流转、失败重试、幂等保护、取消任务和超时处理。
+本文档用于记录 AI Task Orchestrator 当前阶段的 API 调用示例和验收方式，方便本地开发时验证任务创建、查询、状态流转、LLM mock 执行、结果保存、失败重试、幂等保护、取消任务和超时处理。
 
 ## 二、前置条件
 
@@ -35,7 +35,7 @@ Content-Type: application/json
 
 说明：
 
-创建任务后，任务初始状态为 `PENDING`，系统会发送 RabbitMQ 消息，Consumer 异步执行。
+创建任务后，任务初始状态为 `PENDING`，系统会发送 RabbitMQ 消息，Consumer 异步执行。当前执行链路会调用 `LlmClient.generate(...)`，默认由 `MockLlmClient` 返回模拟 LLM 结果。
 
 期望响应示例：
 
@@ -71,6 +71,8 @@ GET http://localhost:8080/tasks/{taskId}
 - `nextRetryAt`
 - `timeoutSeconds`
 - `timeoutAt`
+- `resultContent`
+- `llmModel`
 - `createdAt`
 - `updatedAt`
 
@@ -87,6 +89,8 @@ GET http://localhost:8080/tasks/{taskId}
   "nextRetryAt": null,
   "timeoutSeconds": 30,
   "timeoutAt": "2026-06-30T12:00:30",
+  "resultContent": "Mock LLM response for prompt: normal task",
+  "llmModel": "mock-llm",
   "createdAt": "2026-06-30T12:00:00",
   "updatedAt": "2026-06-30T12:00:05"
 }
@@ -172,9 +176,17 @@ POST http://localhost:8080/dev/tasks/{taskId}/dispatch
 2. 等待几秒。
 3. 查询任务。
 4. 期望 `status = SUCCESS`。
-5. 查询 `task_event`。
+5. 期望 `llmModel = mock-llm`。
+6. 期望 `resultContent` 不为空。
+7. 查询 `task_event`。
 
 SQL：
+
+```sql
+SELECT id, status, llm_model, result_content, error_message
+FROM task
+WHERE id = 你的任务ID;
+```
 
 ```sql
 SELECT task_id, event_type, from_status, to_status, message, created_at
@@ -201,7 +213,7 @@ ORDER BY created_at;
 
 说明：
 
-当前模拟失败规则是 prompt 包含 `fail` 或 `失败` 时抛出异常。
+当前模拟失败规则是 prompt 包含 `fail` 或 `失败` 时，`MockLlmClient` 返回失败响应，不调用真实外部模型。
 
 期望流程：
 
@@ -215,7 +227,8 @@ ORDER BY created_at;
 
 - `status = FAILED`
 - `retryCount = maxRetry`
-- `errorMessage` 不为空
+- `errorMessage` 包含 `Mock LLM execution failed`
+- 失败任务不应保存成功的 `resultContent`
 
 ## 十、重试成功验收
 
@@ -237,6 +250,9 @@ WHERE id = 你的任务ID;
 
 - `RETRY_PENDING -> RUNNING`
 - `RUNNING -> SUCCESS`
+- `llm_model = mock-llm`
+- `result_content` 不为空
+- `error_message` 被清空
 
 ## 十一、取消任务验收
 
@@ -283,7 +299,7 @@ WHERE id = 你的任务ID
 查询最近任务：
 
 ```sql
-SELECT id, prompt, status, error_message, retry_count, max_retry, next_retry_at, timeout_seconds, timeout_at, created_at, updated_at
+SELECT id, prompt, status, error_message, retry_count, max_retry, next_retry_at, timeout_seconds, timeout_at, llm_model, result_content, created_at, updated_at
 FROM task
 ORDER BY id DESC;
 ```
@@ -315,8 +331,8 @@ ORDER BY installed_rank;
 
 ## 十五、注意事项
 
-- 当前项目尚未接入真实 LLM。
-- 当前任务执行是模拟执行。
+- 当前项目尚未接入真实 OpenAI / Claude / 本地模型 Provider。
+- 当前 LLM 执行由 `MockLlmClient` 模拟。
 - `/dev` 开头接口只用于本地验收。
 - 当前超时验收可以通过手动 SQL 修改 `timeout_at` 触发。
 - 当前 Docker Compose 只管理 MySQL 和 RabbitMQ，Spring Boot 仍由本机启动。
