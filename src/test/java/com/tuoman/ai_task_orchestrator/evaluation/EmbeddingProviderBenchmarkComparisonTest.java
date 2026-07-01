@@ -9,6 +9,7 @@ import com.tuoman.ai_task_orchestrator.dto.RetrievalEvaluationCaseResultResponse
 import com.tuoman.ai_task_orchestrator.dto.RetrievalEvaluationRequest;
 import com.tuoman.ai_task_orchestrator.dto.RetrievalEvaluationResponse;
 import com.tuoman.ai_task_orchestrator.dto.RetrievalEvaluationSummaryResponse;
+import com.tuoman.ai_task_orchestrator.embedding.EmbeddingCacheService;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingProvider;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingRequest;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingResponse;
@@ -69,6 +70,9 @@ class EmbeddingProviderBenchmarkComparisonTest {
 
     @Autowired
     private RetrievalMetricsCalculator retrievalMetricsCalculator;
+
+    @Autowired
+    private EmbeddingCacheService embeddingCacheService;
 
     @Test
     void shouldCompareBaselineAndCandidateProviderWithSameBenchmarkWithoutExternalApi() throws Exception {
@@ -155,6 +159,7 @@ class EmbeddingProviderBenchmarkComparisonTest {
                 documentRepository,
                 documentChunkRepository,
                 provider,
+                embeddingCacheService,
                 new ExactCosineVectorStore(documentChunkEmbeddingRepository, documentChunkRepository)
         );
     }

@@ -5,6 +5,7 @@ import com.tuoman.ai_task_orchestrator.dto.RetrievalEvaluationCaseResultResponse
 import com.tuoman.ai_task_orchestrator.dto.RetrievalEvaluationRequest;
 import com.tuoman.ai_task_orchestrator.dto.RetrievalEvaluationResponse;
 import com.tuoman.ai_task_orchestrator.dto.RetrievalEvaluationSummaryResponse;
+import com.tuoman.ai_task_orchestrator.embedding.EmbeddingCacheService;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingProvider;
 import com.tuoman.ai_task_orchestrator.entity.DocumentChunkEntity;
 import com.tuoman.ai_task_orchestrator.repository.DocumentChunkRepository;
@@ -29,6 +30,8 @@ public class VectorStoreBenchmarkRunner {
     private final DocumentChunkRepository documentChunkRepository;
 
     private final RetrievalMetricsCalculator retrievalMetricsCalculator;
+
+    private final EmbeddingCacheService embeddingCacheService;
 
     public VectorStoreBenchmarkResponse compare(VectorStoreBenchmarkRequest request) {
         validateRequest(request);
@@ -72,6 +75,7 @@ public class VectorStoreBenchmarkRunner {
                 documentRepository,
                 documentChunkRepository,
                 embeddingProvider,
+                embeddingCacheService,
                 measuringVectorStore
         );
         documentEmbeddingService.embedDocument(documentId);

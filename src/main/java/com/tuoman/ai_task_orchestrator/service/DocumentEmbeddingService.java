@@ -4,6 +4,8 @@ import com.tuoman.ai_task_orchestrator.common.error.BusinessException;
 import com.tuoman.ai_task_orchestrator.dto.DocumentEmbeddingResponse;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchRequest;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchResultResponse;
+import com.tuoman.ai_task_orchestrator.embedding.CachedEmbeddingResult;
+import com.tuoman.ai_task_orchestrator.embedding.EmbeddingCacheService;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingRequest;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingResponse;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingProvider;
@@ -19,6 +21,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -35,6 +38,8 @@ public class DocumentEmbeddingService {
     private final DocumentChunkRepository documentChunkRepository;
 
     private final EmbeddingProvider embeddingProvider;
+
+    private final EmbeddingCacheService embeddingCacheService;
 
     private final VectorStore vectorStore;
 
@@ -120,21 +125,24 @@ public class DocumentEmbeddingService {
             DocumentChunkEntity chunk,
             String embeddingModel
     ) {
-        EmbeddingRequest request = new EmbeddingRequest();
-        request.setText(chunk.getContent());
-        request.setModel(embeddingModel);
-        EmbeddingResponse response = embeddingProvider.embed(request);
+        CachedEmbeddingResult cached = embeddingCacheService.getOrCompute(
+                chunk.getContent(),
+                embeddingProvider.provider(),
+                embeddingModel,
+                embeddingProvider.dimension(),
+                embeddingProvider
+        );
 
         return new VectorStoreDocument(
                 chunk.getId(),
                 documentId,
                 chunk.getContent(),
-                response.getVector(),
-                response.getProvider(),
-                response.getModel(),
-                response.getDimension(),
-                response.getDistanceMetric(),
-                chunkMetadata(chunk)
+                cached.embedding(),
+                cached.provider(),
+                cached.model(),
+                cached.dimension(),
+                cached.distanceMetric(),
+                chunkMetadata(chunk, cached.chunkHash())
         );
     }
 
@@ -156,11 +164,12 @@ public class DocumentEmbeddingService {
         );
     }
 
-    private Map<String, String> chunkMetadata(DocumentChunkEntity chunk) {
-        return Map.of(
-                "chunkStrategy", chunk.getChunkStrategy() == null ? "" : chunk.getChunkStrategy(),
-                "headingPath", chunk.getHeadingPath() == null ? "" : chunk.getHeadingPath()
-        );
+    private Map<String, String> chunkMetadata(DocumentChunkEntity chunk, String chunkHash) {
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put("chunkStrategy", chunk.getChunkStrategy() == null ? "" : chunk.getChunkStrategy());
+        metadata.put("headingPath", chunk.getHeadingPath() == null ? "" : chunk.getHeadingPath());
+        metadata.put("chunkHash", chunkHash == null ? "" : chunkHash);
+        return metadata;
     }
 
     private int normalizeTopK(Integer topK) {
