@@ -29,11 +29,17 @@ class TaskServiceCreateTaskTest {
 
     private final TaskOutboxService taskOutboxService = mock(TaskOutboxService.class);
 
+    private final TaskAttemptService taskAttemptService = mock(TaskAttemptService.class);
+
+    private final TaskOutputChunkService taskOutputChunkService = mock(TaskOutputChunkService.class);
+
     private final TaskService taskService = new TaskService(
             taskRepository,
             taskEventRepository,
             taskStateMachine,
-            taskOutboxService
+            taskOutboxService,
+            taskAttemptService,
+            taskOutputChunkService
     );
 
     @Test

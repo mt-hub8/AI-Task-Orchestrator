@@ -7,10 +7,12 @@ import com.tuoman.ai_task_orchestrator.entity.TaskEntity;
 import com.tuoman.ai_task_orchestrator.entity.TaskEventEntity;
 import com.tuoman.ai_task_orchestrator.enums.TaskEventType;
 import com.tuoman.ai_task_orchestrator.enums.TaskStatus;
+import com.tuoman.ai_task_orchestrator.llm.LlmResponse;
 import com.tuoman.ai_task_orchestrator.repository.TaskEventRepository;
 import com.tuoman.ai_task_orchestrator.repository.TaskRepository;
 import com.tuoman.ai_task_orchestrator.state.TaskStateMachine;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,7 +23,10 @@ import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class TaskService {
+
+    private static final String TIMEOUT_ERROR_MESSAGE = "任务执行超时";
 
     private static final String DEFAULT_ERROR_MESSAGE = "未知错误";
 
@@ -34,6 +39,10 @@ public class TaskService {
     private final TaskStateMachine taskStateMachine;
 
     private final TaskOutboxService taskOutboxService;
+
+    private final TaskAttemptService taskAttemptService;
+
+    private final TaskOutputChunkService taskOutputChunkService;
 
     @Transactional
     public CreateTaskResponse createTask(CreateTaskRequest request) {
@@ -148,74 +157,94 @@ public class TaskService {
     }
 
     @Transactional
-    public TaskDetailResponse markTaskFailed(Long taskId, String errorMessage) {
-        TaskEntity task = findTaskOrThrow(taskId);
-        TaskStatus currentStatus = task.getStatus();
-        TaskStatus targetStatus = TaskStatus.FAILED;
-
-        if (!taskStateMachine.canTransit(currentStatus, targetStatus)) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "非法状态流转：" + currentStatus + " -> " + targetStatus
-            );
-        }
-
+    public boolean tryMarkTaskFailed(Long taskId, String errorMessage) {
         String normalizedErrorMessage = normalizeErrorMessage(errorMessage);
-
-        task.setStatus(targetStatus);
-        task.setErrorMessage(normalizedErrorMessage);
-
-        TaskEntity savedTask = taskRepository.save(task);
-
-        recordTaskEvent(
-                savedTask.getId(),
-                TaskEventType.STATUS_CHANGED,
-                currentStatus,
-                targetStatus,
+        int updated = taskRepository.markFailedIfRunning(
+                taskId,
+                TaskStatus.FAILED,
+                TaskStatus.RUNNING,
                 normalizedErrorMessage
         );
 
-        return toTaskDetailResponse(savedTask);
+        if (updated != 1) {
+            log.info("task_failed_finalization_rejected taskId={}", taskId);
+            return false;
+        }
+
+        recordTaskEvent(
+                taskId,
+                TaskEventType.STATUS_CHANGED,
+                TaskStatus.RUNNING,
+                TaskStatus.FAILED,
+                normalizedErrorMessage
+        );
+
+        return true;
     }
 
     @Transactional
-    public TaskDetailResponse markTaskSucceeded(
+    public boolean finalizeSuccessfulExecution(
             Long taskId,
-            String resultContent,
-            String llmModel,
+            Long attemptId,
+            LlmResponse response,
             String renderedPrompt,
             String promptTemplateCode
     ) {
-        TaskEntity task = findTaskOrThrow(taskId);
-        TaskStatus currentStatus = task.getStatus();
-        TaskStatus targetStatus = TaskStatus.SUCCESS;
+        int updated = taskRepository.markSucceededIfRunning(
+                taskId,
+                TaskStatus.SUCCESS,
+                TaskStatus.RUNNING,
+                response.getContent(),
+                response.getModel(),
+                renderedPrompt,
+                promptTemplateCode
+        );
 
-        if (!taskStateMachine.canTransit(currentStatus, targetStatus)) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "非法状态流转：" + currentStatus + " -> " + targetStatus
-            );
+        if (updated != 1) {
+            log.info("task_success_finalization_rejected taskId={}", taskId);
+            return false;
         }
 
-        task.setStatus(targetStatus);
-        task.setResultContent(resultContent);
-        task.setLlmModel(llmModel);
-        task.setRenderedPrompt(renderedPrompt);
-        task.setPromptTemplateCode(promptTemplateCode);
-        task.setNextRetryAt(null);
-        task.setErrorMessage(null);
-
-        TaskEntity savedTask = taskRepository.save(task);
-
         recordTaskEvent(
-                savedTask.getId(),
+                taskId,
                 TaskEventType.STATUS_CHANGED,
-                currentStatus,
-                targetStatus,
+                TaskStatus.RUNNING,
+                TaskStatus.SUCCESS,
                 "LLM 任务执行成功"
         );
 
-        return toTaskDetailResponse(savedTask);
+        taskAttemptService.markSuccess(attemptId, response, renderedPrompt, promptTemplateCode);
+        taskOutputChunkService.saveChunks(taskId, response.getContent());
+        return true;
+    }
+
+    @Transactional
+    public boolean tryMarkTaskRetryPending(Long taskId, String errorMessage) {
+        String normalizedErrorMessage = normalizeErrorMessage(errorMessage);
+        LocalDateTime nextRetryAt = LocalDateTime.now().plusSeconds(10);
+        int updated = taskRepository.markRetryPendingIfRunning(
+                taskId,
+                TaskStatus.RETRY_PENDING,
+                TaskStatus.RUNNING,
+                nextRetryAt,
+                normalizedErrorMessage
+        );
+
+        if (updated != 1) {
+            log.info("task_retry_pending_finalization_rejected taskId={}", taskId);
+            return false;
+        }
+
+        TaskEntity task = findTaskOrThrow(taskId);
+        recordTaskEvent(
+                taskId,
+                TaskEventType.STATUS_CHANGED,
+                TaskStatus.RUNNING,
+                TaskStatus.RETRY_PENDING,
+                "任务执行失败，等待第 " + task.getRetryCount() + " 次重试：" + normalizedErrorMessage
+        );
+
+        return true;
     }
 
     @Transactional
@@ -239,48 +268,9 @@ public class TaskService {
     }
 
     @Transactional
-    public TaskDetailResponse markTaskRetryPending(Long taskId, String errorMessage) {
-        TaskEntity task = findTaskOrThrow(taskId);
-        TaskStatus currentStatus = task.getStatus();
-        TaskStatus targetStatus = TaskStatus.RETRY_PENDING;
-
-        if (!taskStateMachine.canTransit(currentStatus, targetStatus)) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "非法状态流转：" + currentStatus + " -> " + targetStatus
-            );
-        }
-
-        if (task.getRetryCount() >= task.getMaxRetry()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "任务已达到最大重试次数");
-        }
-
-        String normalizedErrorMessage = normalizeErrorMessage(errorMessage);
-        int nextRetryCount = task.getRetryCount() + 1;
-
-        task.setRetryCount(nextRetryCount);
-        task.setNextRetryAt(LocalDateTime.now().plusSeconds(10));
-        task.setErrorMessage(normalizedErrorMessage);
-        task.setStatus(targetStatus);
-
-        TaskEntity savedTask = taskRepository.save(task);
-
-        recordTaskEvent(
-                savedTask.getId(),
-                TaskEventType.STATUS_CHANGED,
-                currentStatus,
-                targetStatus,
-                "任务执行失败，等待第 " + nextRetryCount + " 次重试：" + normalizedErrorMessage
-        );
-
-        return toTaskDetailResponse(savedTask);
-    }
-
-    @Transactional
     public TaskDetailResponse cancelTask(Long taskId, String message) {
         TaskEntity task = findTaskOrThrow(taskId);
         TaskStatus currentStatus = task.getStatus();
-        TaskStatus targetStatus = TaskStatus.CANCELLED;
 
         if (currentStatus != TaskStatus.PENDING
                 && currentStatus != TaskStatus.RETRY_PENDING
@@ -288,27 +278,25 @@ public class TaskService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前任务状态不允许取消");
         }
 
-        if (!taskStateMachine.canTransit(currentStatus, targetStatus)) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "非法状态流转：" + currentStatus + " -> " + targetStatus
-            );
+        int updated = taskRepository.markCancelledIfAllowed(
+                taskId,
+                TaskStatus.CANCELLED,
+                List.of(currentStatus)
+        );
+
+        if (updated != 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前任务状态不允许取消");
         }
 
-        task.setStatus(targetStatus);
-        task.setNextRetryAt(null);
-
-        TaskEntity savedTask = taskRepository.save(task);
-
         recordTaskEvent(
-                savedTask.getId(),
+                taskId,
                 TaskEventType.STATUS_CHANGED,
                 currentStatus,
-                targetStatus,
+                TaskStatus.CANCELLED,
                 message
         );
 
-        return toTaskDetailResponse(savedTask);
+        return toTaskDetailResponse(findTaskOrThrow(taskId));
     }
 
     @Transactional(readOnly = true)
@@ -324,40 +312,28 @@ public class TaskService {
     }
 
     @Transactional
-    public TaskDetailResponse markTaskTimedOut(Long taskId) {
-        TaskEntity task = findTaskOrThrow(taskId);
-        TaskStatus currentStatus = task.getStatus();
-
-        if (currentStatus != TaskStatus.RUNNING) {
-            return toTaskDetailResponse(task);
-        }
-
-        TaskStatus targetStatus = TaskStatus.FAILED;
-
-        if (!taskStateMachine.canTransit(currentStatus, targetStatus)) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "非法状态流转：" + currentStatus + " -> " + targetStatus
-            );
-        }
-
-        String errorMessage = "任务执行超时";
-
-        task.setStatus(targetStatus);
-        task.setErrorMessage(errorMessage);
-        task.setNextRetryAt(null);
-
-        TaskEntity savedTask = taskRepository.save(task);
-
-        recordTaskEvent(
-                savedTask.getId(),
-                TaskEventType.STATUS_CHANGED,
-                currentStatus,
-                targetStatus,
-                errorMessage
+    public boolean tryMarkTaskTimedOut(Long taskId) {
+        int updated = taskRepository.markTimedOutIfRunning(
+                taskId,
+                TaskStatus.FAILED,
+                TaskStatus.RUNNING,
+                TIMEOUT_ERROR_MESSAGE
         );
 
-        return toTaskDetailResponse(savedTask);
+        if (updated != 1) {
+            log.info("task_timeout_finalization_rejected taskId={}", taskId);
+            return false;
+        }
+
+        recordTaskEvent(
+                taskId,
+                TaskEventType.STATUS_CHANGED,
+                TaskStatus.RUNNING,
+                TaskStatus.FAILED,
+                TIMEOUT_ERROR_MESSAGE
+        );
+
+        return true;
     }
 
     private String normalizeErrorMessage(String errorMessage) {

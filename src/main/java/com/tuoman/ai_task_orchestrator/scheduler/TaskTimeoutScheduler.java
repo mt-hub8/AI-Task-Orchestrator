@@ -33,7 +33,7 @@ public class TaskTimeoutScheduler {
         for (TaskEntity task : tasks) {
             try {
                 log.info("Mark task timed out, taskId={}", task.getId());
-                taskService.markTaskTimedOut(task.getId());
+                taskService.tryMarkTaskTimedOut(task.getId());
             } catch (Exception e) {
                 log.error("Failed to mark task timed out, taskId={}", task.getId(), e);
             }

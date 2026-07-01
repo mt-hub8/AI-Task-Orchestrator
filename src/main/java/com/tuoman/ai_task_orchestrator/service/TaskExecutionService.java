@@ -24,8 +24,6 @@ public class TaskExecutionService {
 
     private final TaskService taskService;
 
-    private final TaskOutputChunkService taskOutputChunkService;
-
     private final TaskAttemptService taskAttemptService;
 
     private final LlmClient llmClient;
@@ -143,29 +141,25 @@ public class TaskExecutionService {
                 return;
             }
 
-            if (!taskService.isTaskRunning(taskId)) {
-                taskAttemptService.markFailed(attempt.getId(), "Task is no longer running", response, renderedPrompt, DEFAULT_TEMPLATE_CODE);
-                log.info("Task is no longer running, skip marking success, taskId={}", taskId);
-                return;
-            }
-
-            taskOutputChunkService.saveChunks(taskId, response.getContent());
-
-            if (!taskService.isTaskRunning(taskId)) {
-                taskAttemptService.markFailed(attempt.getId(), "Task is no longer running after saving chunks", response, renderedPrompt, DEFAULT_TEMPLATE_CODE);
-                log.info("Task is no longer running, skip marking success after saving chunks, taskId={}", taskId);
-                return;
-            }
-
-            taskAttemptService.markSuccess(attempt.getId(), response, renderedPrompt, DEFAULT_TEMPLATE_CODE);
-
-            taskService.markTaskSucceeded(
+            boolean finalized = taskService.finalizeSuccessfulExecution(
                     taskId,
-                    response.getContent(),
-                    response.getModel(),
+                    attempt.getId(),
+                    response,
                     renderedPrompt,
                     DEFAULT_TEMPLATE_CODE
             );
+
+            if (!finalized) {
+                taskAttemptService.markFailed(
+                        attempt.getId(),
+                        "Task success finalization rejected",
+                        response,
+                        renderedPrompt,
+                        DEFAULT_TEMPLATE_CODE
+                );
+                log.info("Task success finalization rejected, taskId={}", taskId);
+                return;
+            }
 
             log.info(
                     "task_final_status_updated taskId={} attemptId={} attemptNo={} status={}",
@@ -217,8 +211,7 @@ public class TaskExecutionService {
             return;
         }
 
-        try {
-            taskService.markTaskRetryPending(taskId, errorMessage);
+        if (taskService.tryMarkTaskRetryPending(taskId, errorMessage)) {
             log.info(
                     "task_final_status_updated taskId={} attemptId={} attemptNo={} status={}",
                     taskId,
@@ -227,9 +220,10 @@ public class TaskExecutionService {
                     "RETRY_PENDING"
             );
             log.info("Task entered retry pending, taskId={}", taskId);
-        } catch (Exception retryPendingException) {
-            log.error("Task cannot retry, mark as failed, taskId={}", taskId, retryPendingException);
-            taskService.markTaskFailed(taskId, errorMessage);
+            return;
+        }
+
+        if (taskService.tryMarkTaskFailed(taskId, errorMessage)) {
             log.info(
                     "task_final_status_updated taskId={} attemptId={} attemptNo={} status={}",
                     taskId,
@@ -237,6 +231,9 @@ public class TaskExecutionService {
                     attempt == null ? null : attempt.getAttemptNo(),
                     "FAILED"
             );
+            return;
         }
+
+        log.info("Task failure finalization rejected, taskId={}", taskId);
     }
 }

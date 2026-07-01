@@ -27,8 +27,6 @@ class TaskExecutionServiceTest {
 
     private final TaskService taskService = mock(TaskService.class);
 
-    private final TaskOutputChunkService taskOutputChunkService = mock(TaskOutputChunkService.class);
-
     private final TaskAttemptService taskAttemptService = mock(TaskAttemptService.class);
 
     private final LlmClient llmClient = mock(LlmClient.class);
@@ -41,7 +39,6 @@ class TaskExecutionServiceTest {
 
     private final TaskExecutionService taskExecutionService = new TaskExecutionService(
             taskService,
-            taskOutputChunkService,
             taskAttemptService,
             llmClient,
             modelRouter,
@@ -82,10 +79,38 @@ class TaskExecutionServiceTest {
         taskExecutionService.executeTask(1L);
 
         verify(taskAttemptService).createRunningAttempt(1L);
-        verify(taskAttemptService).markSuccess(10L, response, "rendered prompt", "default_task_prompt");
+        verify(taskService).finalizeSuccessfulExecution(1L, 10L, response, "rendered prompt", "default_task_prompt");
         verify(taskService).saveLlmMetadata(1L, "mock", "mock-fast", 3, 4, 7, 12L);
-        verify(taskOutputChunkService).saveChunks(1L, "content");
-        verify(taskService).markTaskSucceeded(1L, "content", "mock-fast", "rendered prompt", "default_task_prompt");
+    }
+
+    @Test
+    void rejectedSuccessFinalizationShouldMarkFailedAttemptAndSkipChunks() {
+        TaskAttemptEntity attempt = runningAttempt();
+        LlmResponse response = successResponse();
+
+        when(taskService.tryStartTaskExecution(1L, "Task execution started")).thenReturn(true);
+        when(taskAttemptService.createRunningAttempt(1L)).thenReturn(attempt);
+        when(taskService.isTaskCancelled(1L)).thenReturn(false);
+        when(taskService.isTaskRunning(1L)).thenReturn(true);
+        when(taskService.getTaskById(1L)).thenReturn(taskDetail("normal task", "mock-fast"));
+        when(modelRouter.route("mock-fast")).thenReturn("mock-fast");
+        when(promptTemplateRepository.findByTemplateCodeAndEnabledTrue("default_task_prompt"))
+                .thenReturn(Optional.of(template()));
+        when(promptTemplateRenderer.render(any(), any())).thenReturn("rendered prompt");
+        when(llmClient.generate(any(LlmRequest.class))).thenReturn(response);
+        when(taskService.finalizeSuccessfulExecution(1L, 10L, response, "rendered prompt", "default_task_prompt"))
+                .thenReturn(false);
+
+        taskExecutionService.executeTask(1L);
+
+        verify(taskAttemptService).markFailed(
+                10L,
+                "Task success finalization rejected",
+                response,
+                "rendered prompt",
+                "default_task_prompt"
+        );
+        verify(taskAttemptService, never()).markSuccess(any(), any(), any(), any());
     }
 
     @Test
@@ -113,8 +138,7 @@ class TaskExecutionServiceTest {
                 "rendered prompt",
                 "default_task_prompt"
         );
-        verify(taskService).markTaskRetryPending(1L, "Mock LLM execution failed");
-        verify(taskOutputChunkService, never()).saveChunks(any(), any());
+        verify(taskService).tryMarkTaskRetryPending(1L, "Mock LLM execution failed");
     }
 
     private TaskAttemptEntity runningAttempt() {
