@@ -1,0 +1,69 @@
+### AI Task Orchestrator — Qdrant 手工验证 HTTP 流程
+### 前置：
+### 1. docker compose up -d（MySQL + RabbitMQ）
+### 2. docker compose -f docker-compose.qdrant.yml up -d（Qdrant）
+### 3. Spring Boot 使用 docker,qdrant profile 启动
+### 默认仍使用 mock embedding（dimension=128），仅 VectorStore 切换为 Qdrant
+
+@baseUrl = http://localhost:8080
+@documentId = 1
+
+### 上传文档（multipart；参数名 file；仅 .txt / .md）
+POST {{baseUrl}}/documents
+Content-Type: multipart/form-data; boundary=----QdrantDemoBoundary
+
+------QdrantDemoBoundary
+Content-Disposition: form-data; name="file"; filename="qdrant-verification.md"
+Content-Type: text/markdown
+
+# Qdrant Manual Verification
+
+[EVIDENCE:qdrant-verification]
+This chunk is used to verify that document upload, mock embedding, Qdrant upsert and vector search work together.
+------QdrantDemoBoundary--
+
+> {%
+    if (response.status === 200) {
+        client.global.set("documentId", response.body.documentId);
+    }
+%}
+
+###
+
+### 查询文档 chunks
+GET {{baseUrl}}/documents/{{documentId}}/chunks
+
+###
+
+### 生成 embedding 并 upsert 到 Qdrant（mock provider）
+POST {{baseUrl}}/documents/{{documentId}}/embeddings
+
+###
+
+### 语义检索 TopK（经 QdrantVectorStore）
+POST {{baseUrl}}/documents/search
+Content-Type: application/json
+
+{
+  "query": "verify Qdrant upsert and vector search",
+  "topK": 5,
+  "documentId": {{documentId}}
+}
+
+###
+
+### 可选：Retrieval Evaluation（需将 expectedChunkIds 替换为真实 chunkId）
+# POST {{baseUrl}}/evaluations/retrieval
+# Content-Type: application/json
+#
+# {
+#   "documentId": {{documentId}},
+#   "topKValues": [1, 3, 5],
+#   "cases": [
+#     {
+#       "caseId": "qdrant-verify-001",
+#       "query": "verify Qdrant upsert",
+#       "expectedChunkIds": [1]
+#     }
+#   ]
+# }
