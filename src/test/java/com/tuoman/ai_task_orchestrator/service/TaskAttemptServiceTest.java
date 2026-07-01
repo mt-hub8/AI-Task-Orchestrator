@@ -1,14 +1,23 @@
 package com.tuoman.ai_task_orchestrator.service;
 
+import com.tuoman.ai_task_orchestrator.dto.TaskAttemptResponse;
 import com.tuoman.ai_task_orchestrator.entity.TaskAttemptEntity;
 import com.tuoman.ai_task_orchestrator.enums.TaskAttemptStatus;
+import com.tuoman.ai_task_orchestrator.entity.TaskEntity;
+import com.tuoman.ai_task_orchestrator.enums.TaskStatus;
 import com.tuoman.ai_task_orchestrator.llm.LlmResponse;
 import com.tuoman.ai_task_orchestrator.repository.TaskAttemptRepository;
+import com.tuoman.ai_task_orchestrator.repository.TaskRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.util.Arrays;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -22,6 +31,9 @@ class TaskAttemptServiceTest {
 
     @Autowired
     private TaskAttemptRepository taskAttemptRepository;
+
+    @Autowired
+    private TaskRepository taskRepository;
 
     @Test
     void createRunningAttemptShouldIncreaseAttemptNo() {
@@ -90,6 +102,70 @@ class TaskAttemptServiceTest {
         assertThat(saved.getFinishedAt()).isNotNull();
     }
 
+    @Test
+    void getAttemptsShouldReturnResponsesOrderedByAttemptNo() {
+        TaskEntity task = saveTask("attempt history task");
+        TaskAttemptEntity second = newRunningAttempt(task.getId(), 2);
+        second.setLlmProvider("mock");
+        second.setLlmModel("mock-smart");
+        second.setPromptTemplateCode("default_task_prompt");
+        second.setPromptTokenCount(10);
+        second.setCompletionTokenCount(20);
+        second.setTotalTokenCount(30);
+        second.setLlmLatencyMs(40L);
+        second.setErrorMessage("retry failed");
+
+        TaskAttemptEntity first = newRunningAttempt(task.getId(), 1);
+        first.setLlmProvider("mock");
+        first.setLlmModel("mock-fast");
+        first.setPromptTemplateCode("default_task_prompt");
+        first.setPromptTokenCount(1);
+        first.setCompletionTokenCount(2);
+        first.setTotalTokenCount(3);
+        first.setLlmLatencyMs(4L);
+
+        taskAttemptRepository.saveAndFlush(second);
+        taskAttemptRepository.saveAndFlush(first);
+
+        List<TaskAttemptResponse> responses = taskAttemptService.getAttempts(task.getId());
+
+        assertThat(responses).hasSize(2);
+        assertThat(responses).extracting(TaskAttemptResponse::getAttemptNo).containsExactly(1, 2);
+        assertThat(responses.get(0).getTaskId()).isEqualTo(task.getId());
+        assertThat(responses.get(0).getStatus()).isEqualTo(TaskAttemptStatus.RUNNING);
+        assertThat(responses.get(0).getWorkerId()).isEqualTo("test-worker");
+        assertThat(responses.get(0).getLlmProvider()).isEqualTo("mock");
+        assertThat(responses.get(0).getLlmModel()).isEqualTo("mock-fast");
+        assertThat(responses.get(0).getPromptTemplateCode()).isEqualTo("default_task_prompt");
+        assertThat(responses.get(0).getPromptTokenCount()).isEqualTo(1);
+        assertThat(responses.get(0).getCompletionTokenCount()).isEqualTo(2);
+        assertThat(responses.get(0).getTotalTokenCount()).isEqualTo(3);
+        assertThat(responses.get(0).getLlmLatencyMs()).isEqualTo(4L);
+        assertThat(responses.get(1).getErrorMessage()).isEqualTo("retry failed");
+    }
+
+    @Test
+    void getAttemptsShouldReturnEmptyListWhenTaskHasNoAttempts() {
+        TaskEntity task = saveTask("task without attempts");
+
+        assertThat(taskAttemptService.getAttempts(task.getId())).isEmpty();
+    }
+
+    @Test
+    void getAttemptsShouldReturnNotFoundWhenTaskDoesNotExist() {
+        assertThatThrownBy(() -> taskAttemptService.getAttempts(999999L))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting("statusCode")
+                .isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void taskAttemptResponseShouldNotExposeRenderedPrompt() {
+        assertThat(Arrays.stream(TaskAttemptResponse.class.getDeclaredFields())
+                .map(field -> field.getName()))
+                .doesNotContain("renderedPrompt");
+    }
+
     private TaskAttemptEntity newRunningAttempt(Long taskId, Integer attemptNo) {
         TaskAttemptEntity attempt = new TaskAttemptEntity();
         attempt.setTaskId(taskId);
@@ -98,6 +174,16 @@ class TaskAttemptServiceTest {
         attempt.setWorkerId("test-worker");
         attempt.setStartedAt(java.time.LocalDateTime.now());
         return attempt;
+    }
+
+    private TaskEntity saveTask(String prompt) {
+        TaskEntity task = new TaskEntity();
+        task.setPrompt(prompt);
+        task.setStatus(TaskStatus.PENDING);
+        task.setRetryCount(0);
+        task.setMaxRetry(3);
+        task.setTimeoutSeconds(30);
+        return taskRepository.saveAndFlush(task);
     }
 
     private LlmResponse successResponse() {
