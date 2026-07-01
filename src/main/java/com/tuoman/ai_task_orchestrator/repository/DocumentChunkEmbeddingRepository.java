@@ -25,6 +25,8 @@ public interface DocumentChunkEmbeddingRepository extends JpaRepository<Document
             String embeddingModel
     );
 
+    void deleteByDocumentId(Long documentId);
+
     Optional<DocumentChunkEmbeddingEntity> findByDocumentChunkIdAndEmbeddingProviderAndEmbeddingModel(
             Long documentChunkId,
             String embeddingProvider,

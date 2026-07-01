@@ -6,23 +6,22 @@ import com.tuoman.ai_task_orchestrator.dto.DocumentSearchResultResponse;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingRequest;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingResponse;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingProvider;
-import com.tuoman.ai_task_orchestrator.embedding.EmbeddingVectorUtils;
-import com.tuoman.ai_task_orchestrator.entity.DocumentChunkEmbeddingEntity;
 import com.tuoman.ai_task_orchestrator.entity.DocumentChunkEntity;
-import com.tuoman.ai_task_orchestrator.repository.DocumentChunkEmbeddingRepository;
 import com.tuoman.ai_task_orchestrator.repository.DocumentChunkRepository;
 import com.tuoman.ai_task_orchestrator.repository.DocumentRepository;
+import com.tuoman.ai_task_orchestrator.vectorstore.VectorSearchFilter;
+import com.tuoman.ai_task_orchestrator.vectorstore.VectorSearchRequest;
+import com.tuoman.ai_task_orchestrator.vectorstore.VectorSearchResult;
+import com.tuoman.ai_task_orchestrator.vectorstore.VectorStore;
+import com.tuoman.ai_task_orchestrator.vectorstore.VectorStoreDocument;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -36,9 +35,9 @@ public class DocumentEmbeddingService {
 
     private final DocumentChunkRepository documentChunkRepository;
 
-    private final DocumentChunkEmbeddingRepository documentChunkEmbeddingRepository;
-
     private final EmbeddingProvider embeddingProvider;
+
+    private final VectorStore vectorStore;
 
     @Transactional
     public DocumentEmbeddingResponse embedDocument(Long documentId) {
@@ -59,18 +58,17 @@ public class DocumentEmbeddingService {
             );
         }
 
-        documentChunkEmbeddingRepository.deleteByDocumentIdAndEmbeddingProviderAndEmbeddingModel(
+        vectorStore.deleteByDocumentIdAndProviderAndModel(
                 documentId,
                 embeddingProviderName,
                 embeddingModel
         );
-        documentChunkEmbeddingRepository.flush();
 
-        List<DocumentChunkEmbeddingEntity> embeddings = chunks.stream()
-                .map(chunk -> toEmbeddingEntity(documentId, chunk, embeddingModel))
+        List<VectorStoreDocument> embeddings = chunks.stream()
+                .map(chunk -> toVectorStoreDocument(documentId, chunk, embeddingModel))
                 .toList();
 
-        documentChunkEmbeddingRepository.saveAll(embeddings);
+        vectorStore.upsert(embeddings);
 
         return new DocumentEmbeddingResponse(
                 documentId,
@@ -101,35 +99,24 @@ public class DocumentEmbeddingService {
         embeddingRequest.setModel(embeddingModel);
         EmbeddingResponse queryEmbedding = embeddingProvider.embed(embeddingRequest);
 
-        List<DocumentChunkEmbeddingEntity> candidates = request.getDocumentId() == null
-                ? documentChunkEmbeddingRepository.findByEmbeddingProviderAndEmbeddingModel(embeddingProviderName, embeddingModel)
-                : documentChunkEmbeddingRepository.findByDocumentIdAndEmbeddingProviderAndEmbeddingModel(
-                        request.getDocumentId(),
+        VectorSearchFilter filter = request.getDocumentId() == null
+                ? VectorSearchFilter.empty()
+                : new VectorSearchFilter(List.of(request.getDocumentId()), Map.of());
+
+        return vectorStore.search(new VectorSearchRequest(
+                        queryEmbedding.getVector(),
+                        topK,
                         embeddingProviderName,
-                        embeddingModel
-                );
-
-        if (candidates.isEmpty()) {
-            return List.of();
-        }
-
-        Map<Long, DocumentChunkEntity> chunksById = documentChunkRepository.findAllById(
-                        candidates.stream().map(DocumentChunkEmbeddingEntity::getDocumentChunkId).toList()
-                )
+                        embeddingModel,
+                        queryEmbedding.getDimension(),
+                        filter
+                ))
                 .stream()
-                .collect(Collectors.toMap(DocumentChunkEntity::getId, Function.identity()));
-
-        return candidates.stream()
-                .filter(embedding -> embedding.getVectorDimension().equals(queryEmbedding.getDimension()))
-                .map(embedding -> toScoredResult(embedding, chunksById.get(embedding.getDocumentChunkId()), queryEmbedding))
-                .filter(result -> result.chunk() != null)
-                .sorted(Comparator.comparingDouble(ScoredResult::score).reversed())
-                .limit(topK)
                 .map(this::toSearchResponse)
                 .toList();
     }
 
-    private DocumentChunkEmbeddingEntity toEmbeddingEntity(
+    private VectorStoreDocument toVectorStoreDocument(
             Long documentId,
             DocumentChunkEntity chunk,
             String embeddingModel
@@ -139,45 +126,41 @@ public class DocumentEmbeddingService {
         request.setModel(embeddingModel);
         EmbeddingResponse response = embeddingProvider.embed(request);
 
-        DocumentChunkEmbeddingEntity entity = new DocumentChunkEmbeddingEntity();
-        entity.setDocumentId(documentId);
-        entity.setDocumentChunkId(chunk.getId());
-        entity.setEmbeddingProvider(response.getProvider());
-        entity.setEmbeddingModel(response.getModel());
-        entity.setVectorDimension(response.getDimension());
-        entity.setDistanceMetric(response.getDistanceMetric());
-        entity.setEmbeddingVector(EmbeddingVectorUtils.serialize(response.getVector()));
-        return entity;
-    }
-
-    private ScoredResult toScoredResult(
-            DocumentChunkEmbeddingEntity embedding,
-            DocumentChunkEntity chunk,
-            EmbeddingResponse queryEmbedding
-    ) {
-        List<Double> chunkVector = EmbeddingVectorUtils.deserialize(embedding.getEmbeddingVector());
-        double score = EmbeddingVectorUtils.cosineSimilarity(queryEmbedding.getVector(), chunkVector);
-        return new ScoredResult(embedding, chunk, score);
-    }
-
-    private DocumentSearchResultResponse toSearchResponse(ScoredResult result) {
-        DocumentChunkEmbeddingEntity embedding = result.embedding();
-        DocumentChunkEntity chunk = result.chunk();
-
-        return new DocumentSearchResultResponse(
-                embedding.getDocumentId(),
+        return new VectorStoreDocument(
                 chunk.getId(),
-                chunk.getChunkIndex(),
-                result.score(),
+                documentId,
                 chunk.getContent(),
-                chunk.getContentLength(),
-                chunk.getHeadingPath(),
-                chunk.getStartOffset(),
-                chunk.getEndOffset(),
-                chunk.getChunkStrategy(),
-                embedding.getEmbeddingProvider(),
-                embedding.getEmbeddingModel(),
-                embedding.getDistanceMetric()
+                response.getVector(),
+                response.getProvider(),
+                response.getModel(),
+                response.getDimension(),
+                response.getDistanceMetric(),
+                chunkMetadata(chunk)
+        );
+    }
+
+    private DocumentSearchResultResponse toSearchResponse(VectorSearchResult result) {
+        return new DocumentSearchResultResponse(
+                result.documentId(),
+                result.chunkId(),
+                result.chunkIndex(),
+                result.score(),
+                result.content(),
+                result.contentLength(),
+                result.headingPath(),
+                result.startOffset(),
+                result.endOffset(),
+                result.chunkStrategy(),
+                result.provider(),
+                result.model(),
+                result.distanceMetric()
+        );
+    }
+
+    private Map<String, String> chunkMetadata(DocumentChunkEntity chunk) {
+        return Map.of(
+                "chunkStrategy", chunk.getChunkStrategy() == null ? "" : chunk.getChunkStrategy(),
+                "headingPath", chunk.getHeadingPath() == null ? "" : chunk.getHeadingPath()
         );
     }
 
@@ -208,12 +191,5 @@ public class DocumentEmbeddingService {
     private void ensureDocumentExists(Long documentId) {
         documentRepository.findById(documentId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Document not found"));
-    }
-
-    private record ScoredResult(
-            DocumentChunkEmbeddingEntity embedding,
-            DocumentChunkEntity chunk,
-            double score
-    ) {
     }
 }

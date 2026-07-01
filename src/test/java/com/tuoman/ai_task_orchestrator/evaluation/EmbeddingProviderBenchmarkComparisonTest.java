@@ -22,6 +22,7 @@ import com.tuoman.ai_task_orchestrator.repository.DocumentRepository;
 import com.tuoman.ai_task_orchestrator.service.DocumentEmbeddingService;
 import com.tuoman.ai_task_orchestrator.service.RetrievalEvaluationService;
 import com.tuoman.ai_task_orchestrator.service.RetrievalMetricsCalculator;
+import com.tuoman.ai_task_orchestrator.vectorstore.ExactCosineVectorStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -153,8 +154,8 @@ class EmbeddingProviderBenchmarkComparisonTest {
         return new DocumentEmbeddingService(
                 documentRepository,
                 documentChunkRepository,
-                documentChunkEmbeddingRepository,
-                provider
+                provider,
+                new ExactCosineVectorStore(documentChunkEmbeddingRepository, documentChunkRepository)
         );
     }
 
