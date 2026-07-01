@@ -91,7 +91,8 @@ public class VectorStoreBenchmarkRunner {
                 response.getSummary(),
                 response.getCases(),
                 measuringVectorStore.getTotalSearchLatencyNanos(),
-                measuringVectorStore.getSearchCount()
+                measuringVectorStore.getSearchCount(),
+                measuringVectorStore.toLatencyStats()
         );
     }
 

@@ -80,6 +80,12 @@ class VectorStoreBenchmarkComparisonTest {
 
         assertThat(comparison.baseline().searchCount()).isEqualTo(benchmark.cases().size());
         assertThat(comparison.candidate().searchCount()).isEqualTo(benchmark.cases().size());
+        assertThat(comparison.baseline().latency().searchCount()).isEqualTo(benchmark.cases().size());
+        assertThat(comparison.candidate().latency().searchCount()).isEqualTo(benchmark.cases().size());
+        assertThat(comparison.baseline().latency().averageMillis()).isGreaterThanOrEqualTo(0.0);
+        assertThat(comparison.candidate().latency().p95Millis()).isGreaterThanOrEqualTo(
+                comparison.candidate().latency().minMillis()
+        );
         assertThat(comparison.baseline().totalSearchLatencyNanos()).isGreaterThanOrEqualTo(0);
         assertThat(comparison.candidate().totalSearchLatencyNanos()).isGreaterThanOrEqualTo(0);
         assertThat(comparison.searchLatencyDeltaNanos())

@@ -12,6 +12,7 @@ public record VectorStoreBenchmarkSideResult(
         List<RetrievalEvaluationSummaryResponse> summary,
         List<RetrievalEvaluationCaseResultResponse> cases,
         long totalSearchLatencyNanos,
-        int searchCount
+        int searchCount,
+        LatencyStats latency
 ) {
 }

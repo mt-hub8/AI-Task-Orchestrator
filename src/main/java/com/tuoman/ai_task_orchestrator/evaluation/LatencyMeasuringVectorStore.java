@@ -5,6 +5,8 @@ import com.tuoman.ai_task_orchestrator.vectorstore.VectorSearchResult;
 import com.tuoman.ai_task_orchestrator.vectorstore.VectorStore;
 import com.tuoman.ai_task_orchestrator.vectorstore.VectorStoreDocument;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 public class LatencyMeasuringVectorStore implements VectorStore {
@@ -14,6 +16,8 @@ public class LatencyMeasuringVectorStore implements VectorStore {
     private long totalSearchLatencyNanos;
 
     private int searchCount;
+
+    private final List<Long> searchLatencyNanos = new ArrayList<>();
 
     public LatencyMeasuringVectorStore(VectorStore delegate) {
         this.delegate = delegate;
@@ -30,8 +34,10 @@ public class LatencyMeasuringVectorStore implements VectorStore {
         try {
             return delegate.search(request);
         } finally {
-            totalSearchLatencyNanos += System.nanoTime() - start;
+            long elapsed = System.nanoTime() - start;
+            totalSearchLatencyNanos += elapsed;
             searchCount++;
+            searchLatencyNanos.add(elapsed);
         }
     }
 
@@ -51,5 +57,38 @@ public class LatencyMeasuringVectorStore implements VectorStore {
 
     public int getSearchCount() {
         return searchCount;
+    }
+
+    public LatencyStats toLatencyStats() {
+        if (searchLatencyNanos.isEmpty()) {
+            return LatencyStats.empty();
+        }
+
+        List<Long> sorted = new ArrayList<>(searchLatencyNanos);
+        Collections.sort(sorted);
+        long total = sorted.stream().mapToLong(Long::longValue).sum();
+        int count = sorted.size();
+        return new LatencyStats(
+                count,
+                total,
+                millis(total / (double) count),
+                millis(sorted.getFirst()),
+                millis(sorted.getLast()),
+                millis(percentile(sorted, 50)),
+                millis(percentile(sorted, 95))
+        );
+    }
+
+    private static double millis(double nanos) {
+        return nanos / 1_000_000.0;
+    }
+
+    private static long percentile(List<Long> sorted, int percentile) {
+        if (sorted.isEmpty()) {
+            return 0L;
+        }
+        int index = (int) Math.ceil(percentile / 100.0 * sorted.size()) - 1;
+        index = Math.max(0, Math.min(index, sorted.size() - 1));
+        return sorted.get(index);
     }
 }
