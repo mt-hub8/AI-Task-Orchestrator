@@ -1,5 +1,6 @@
 package com.tuoman.ai_task_orchestrator.service;
 
+import com.tuoman.ai_task_orchestrator.common.error.BusinessException;
 import com.tuoman.ai_task_orchestrator.dto.CreateTaskRequest;
 import com.tuoman.ai_task_orchestrator.dto.CreateTaskResponse;
 import com.tuoman.ai_task_orchestrator.dto.TaskDetailResponse;
@@ -13,10 +14,8 @@ import com.tuoman.ai_task_orchestrator.repository.TaskRepository;
 import com.tuoman.ai_task_orchestrator.state.TaskStateMachine;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -84,10 +83,7 @@ public class TaskService {
         TaskStatus currentStatus = task.getStatus();
 
         if (!taskStateMachine.canTransit(currentStatus, targetStatus)) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "非法状态流转：" + currentStatus + " -> " + targetStatus
-            );
+            throw BusinessException.invalidTaskStatus("非法状态流转：" + currentStatus + " -> " + targetStatus);
         }
 
         task.setStatus(targetStatus);
@@ -275,7 +271,7 @@ public class TaskService {
         if (currentStatus != TaskStatus.PENDING
                 && currentStatus != TaskStatus.RETRY_PENDING
                 && currentStatus != TaskStatus.RUNNING) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前任务状态不允许取消");
+            throw BusinessException.invalidTaskStatus("当前任务状态不允许取消");
         }
 
         int updated = taskRepository.markCancelledIfAllowed(
@@ -285,7 +281,7 @@ public class TaskService {
         );
 
         if (updated != 1) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前任务状态不允许取消");
+            throw BusinessException.invalidTaskStatus("当前任务状态不允许取消");
         }
 
         recordTaskEvent(
@@ -369,7 +365,7 @@ public class TaskService {
 
     private TaskEntity findTaskOrThrow(Long taskId) {
         return taskRepository.findById(taskId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "任务不存在"));
+                .orElseThrow(BusinessException::taskNotFound);
     }
 
     private TaskDetailResponse toTaskDetailResponse(TaskEntity task) {

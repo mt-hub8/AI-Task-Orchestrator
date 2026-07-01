@@ -1,5 +1,6 @@
 package com.tuoman.ai_task_orchestrator.service;
 
+import com.tuoman.ai_task_orchestrator.common.error.BusinessException;
 import com.tuoman.ai_task_orchestrator.dto.DocumentChunkResponse;
 import com.tuoman.ai_task_orchestrator.dto.DocumentDetailResponse;
 import com.tuoman.ai_task_orchestrator.dto.DocumentUploadResponse;
@@ -11,11 +12,9 @@ import com.tuoman.ai_task_orchestrator.enums.DocumentStatus;
 import com.tuoman.ai_task_orchestrator.repository.DocumentChunkRepository;
 import com.tuoman.ai_task_orchestrator.repository.DocumentRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -31,7 +30,7 @@ public class DocumentService {
 
     private final DocumentChunker documentChunker;
 
-    @Transactional(noRollbackFor = ResponseStatusException.class)
+    @Transactional(noRollbackFor = BusinessException.class)
     public DocumentUploadResponse uploadDocument(MultipartFile file) {
         validateFile(file);
 
@@ -73,7 +72,7 @@ public class DocumentService {
             savedDocument.setStatus(DocumentStatus.FAILED);
             savedDocument.setErrorMessage(e.getMessage());
             documentRepository.save(savedDocument);
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Document processing failed");
+            throw BusinessException.internalError("Document processing failed");
         }
     }
 
@@ -94,23 +93,23 @@ public class DocumentService {
 
     private void validateFile(MultipartFile file) {
         if (file == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "File must not be null");
+            throw BusinessException.invalidRequest("File must not be null");
         }
 
         String originalFilename = file.getOriginalFilename();
         if (originalFilename == null || originalFilename.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only .txt and .md files are supported");
+            throw BusinessException.invalidRequest("Only .txt and .md files are supported");
         }
 
         String lowerFilename = originalFilename.toLowerCase();
         if (!lowerFilename.endsWith(".txt") && !lowerFilename.endsWith(".md")) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only .txt and .md files are supported");
+            throw BusinessException.invalidRequest("Only .txt and .md files are supported");
         }
     }
 
     private DocumentEntity findDocumentOrThrow(Long documentId) {
         return documentRepository.findById(documentId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Document not found"));
+                .orElseThrow(BusinessException::documentNotFound);
     }
 
     private DocumentUploadResponse toUploadResponse(DocumentEntity document) {

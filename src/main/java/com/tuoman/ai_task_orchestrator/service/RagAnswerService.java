@@ -1,5 +1,6 @@
 package com.tuoman.ai_task_orchestrator.service;
 
+import com.tuoman.ai_task_orchestrator.common.error.BusinessException;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchRequest;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchResultResponse;
 import com.tuoman.ai_task_orchestrator.dto.RagAnswerRequest;
@@ -13,9 +14,7 @@ import com.tuoman.ai_task_orchestrator.llm.LlmRequest;
 import com.tuoman.ai_task_orchestrator.llm.LlmResponse;
 import com.tuoman.ai_task_orchestrator.llm.ModelRouter;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.stream.IntStream;
@@ -42,7 +41,7 @@ public class RagAnswerService {
 
     public RagAnswerResponse answer(RagAnswerRequest request) {
         if (request == null || request.getQuery() == null || request.getQuery().isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "query must not be blank");
+            throw BusinessException.invalidRequest("query must not be blank");
         }
 
         int topK = normalizeTopK(request.getTopK());

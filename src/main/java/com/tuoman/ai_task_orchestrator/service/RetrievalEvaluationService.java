@@ -1,5 +1,6 @@
 package com.tuoman.ai_task_orchestrator.service;
 
+import com.tuoman.ai_task_orchestrator.common.error.BusinessException;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchRequest;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchResultResponse;
 import com.tuoman.ai_task_orchestrator.dto.RetrievalEvaluationCaseRequest;
@@ -147,7 +148,7 @@ public class RetrievalEvaluationService {
 
     private void validateRequest(RetrievalEvaluationRequest request) {
         if (request == null || request.getCases() == null || request.getCases().isEmpty()) {
-            throw new IllegalArgumentException("cases must not be empty");
+            throw BusinessException.retrievalEvaluationError("cases must not be empty");
         }
 
         request.getCases().forEach(this::validateCase);
@@ -155,15 +156,15 @@ public class RetrievalEvaluationService {
 
     private void validateCase(RetrievalEvaluationCaseRequest evaluationCase) {
         if (evaluationCase == null) {
-            throw new IllegalArgumentException("case must not be null");
+            throw BusinessException.retrievalEvaluationError("case must not be null");
         }
 
         if (evaluationCase.getQuery() == null || evaluationCase.getQuery().isBlank()) {
-            throw new IllegalArgumentException("query must not be blank");
+            throw BusinessException.retrievalEvaluationError("query must not be blank");
         }
 
         if (evaluationCase.getExpectedChunkIds() == null || evaluationCase.getExpectedChunkIds().isEmpty()) {
-            throw new IllegalArgumentException("expectedChunkIds must not be empty");
+            throw BusinessException.retrievalEvaluationError("expectedChunkIds must not be empty");
         }
     }
 
@@ -176,7 +177,7 @@ public class RetrievalEvaluationService {
                 ));
 
         if (expectedChunkIds.isEmpty()) {
-            throw new IllegalArgumentException("expectedChunkIds must not be empty");
+            throw BusinessException.retrievalEvaluationError("expectedChunkIds must not be empty");
         }
 
         return expectedChunkIds;

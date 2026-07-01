@@ -1,5 +1,6 @@
 package com.tuoman.ai_task_orchestrator.service;
 
+import com.tuoman.ai_task_orchestrator.common.error.BusinessException;
 import com.tuoman.ai_task_orchestrator.dto.TaskAttemptResponse;
 import com.tuoman.ai_task_orchestrator.entity.TaskAttemptEntity;
 import com.tuoman.ai_task_orchestrator.enums.TaskAttemptStatus;
@@ -8,10 +9,8 @@ import com.tuoman.ai_task_orchestrator.repository.TaskAttemptRepository;
 import com.tuoman.ai_task_orchestrator.repository.TaskRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.net.InetAddress;
 import java.time.LocalDateTime;
@@ -126,7 +125,7 @@ public class TaskAttemptService {
     @Transactional(readOnly = true)
     public List<TaskAttemptResponse> getAttempts(Long taskId) {
         if (!taskRepository.existsById(taskId)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Task not found");
+            throw BusinessException.taskNotFound();
         }
         return taskAttemptRepository.findByTaskIdOrderByAttemptNoAsc(taskId)
                 .stream()

@@ -1,0 +1,14 @@
+package com.tuoman.ai_task_orchestrator.common.error;
+
+public enum ErrorCode {
+    TASK_NOT_FOUND,
+    INVALID_TASK_STATUS,
+    TASK_FINALIZATION_REJECTED,
+    DOCUMENT_NOT_FOUND,
+    INVALID_REQUEST,
+    VALIDATION_ERROR,
+    EMBEDDING_PROVIDER_ERROR,
+    VECTOR_STORE_ERROR,
+    RETRIEVAL_EVALUATION_ERROR,
+    INTERNAL_ERROR
+}

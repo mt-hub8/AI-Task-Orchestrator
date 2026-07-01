@@ -1,5 +1,6 @@
 package com.tuoman.ai_task_orchestrator.service;
 
+import com.tuoman.ai_task_orchestrator.common.error.BusinessException;
 import com.tuoman.ai_task_orchestrator.dto.DocumentEmbeddingResponse;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchRequest;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchResultResponse;
@@ -15,10 +16,8 @@ import com.tuoman.ai_task_orchestrator.vectorstore.VectorSearchResult;
 import com.tuoman.ai_task_orchestrator.vectorstore.VectorStore;
 import com.tuoman.ai_task_orchestrator.vectorstore.VectorStoreDocument;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
@@ -83,7 +82,7 @@ public class DocumentEmbeddingService {
     @Transactional(readOnly = true)
     public List<DocumentSearchResultResponse> search(DocumentSearchRequest request) {
         if (request == null || request.getQuery() == null || request.getQuery().isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "query must not be blank");
+            throw BusinessException.invalidRequest("query must not be blank");
         }
 
         int topK = normalizeTopK(request.getTopK());
@@ -170,7 +169,7 @@ public class DocumentEmbeddingService {
         }
 
         if (topK <= 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "topK must be greater than 0");
+            throw BusinessException.invalidRequest("topK must be greater than 0");
         }
 
         return Math.min(topK, MAX_TOP_K);
@@ -190,6 +189,6 @@ public class DocumentEmbeddingService {
 
     private void ensureDocumentExists(Long documentId) {
         documentRepository.findById(documentId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Document not found"));
+                .orElseThrow(BusinessException::documentNotFound);
     }
 }

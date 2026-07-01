@@ -14,7 +14,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
+import com.tuoman.ai_task_orchestrator.common.error.BusinessException;
+import com.tuoman.ai_task_orchestrator.common.error.ErrorCode;
 
 import java.util.Arrays;
 import java.util.List;
@@ -154,9 +155,12 @@ class TaskAttemptServiceTest {
     @Test
     void getAttemptsShouldReturnNotFoundWhenTaskDoesNotExist() {
         assertThatThrownBy(() -> taskAttemptService.getAttempts(999999L))
-                .isInstanceOf(ResponseStatusException.class)
-                .extracting("statusCode")
-                .isEqualTo(HttpStatus.NOT_FOUND);
+                .isInstanceOf(BusinessException.class)
+                .satisfies(exception -> {
+                    BusinessException businessException = (BusinessException) exception;
+                    assertThat(businessException.getErrorCode()).isEqualTo(ErrorCode.TASK_NOT_FOUND);
+                    assertThat(businessException.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                });
     }
 
     @Test

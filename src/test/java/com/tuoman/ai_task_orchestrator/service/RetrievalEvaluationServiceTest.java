@@ -1,5 +1,6 @@
 package com.tuoman.ai_task_orchestrator.service;
 
+import com.tuoman.ai_task_orchestrator.common.error.BusinessException;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchRequest;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchResultResponse;
 import com.tuoman.ai_task_orchestrator.dto.RetrievalEvaluationCaseRequest;
@@ -183,11 +184,11 @@ class RetrievalEvaluationServiceTest {
     @Test
     void evaluateShouldRejectInvalidRequests() {
         assertThatThrownBy(() -> retrievalEvaluationService.evaluate(null))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(BusinessException.class)
                 .hasMessage("cases must not be empty");
 
         assertThatThrownBy(() -> retrievalEvaluationService.evaluate(request(null, List.of(1), List.of())))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(BusinessException.class)
                 .hasMessage("cases must not be empty");
 
         assertThatThrownBy(() -> retrievalEvaluationService.evaluate(request(
@@ -195,7 +196,7 @@ class RetrievalEvaluationServiceTest {
                 List.of(1),
                 List.of(evaluationCase("case-1", " ", List.of(1L)))
         )))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(BusinessException.class)
                 .hasMessage("query must not be blank");
 
         assertThatThrownBy(() -> retrievalEvaluationService.evaluate(request(
@@ -203,7 +204,7 @@ class RetrievalEvaluationServiceTest {
                 List.of(1),
                 List.of(evaluationCase("case-1", "query", List.of()))
         )))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(BusinessException.class)
                 .hasMessage("expectedChunkIds must not be empty");
     }
 
