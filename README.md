@@ -1,69 +1,143 @@
 # AI Task Orchestrator
 
-## 1. Project Overview
+## 1. 项目定位
 
-AI Task Orchestrator 是一个基于 Java / Spring Boot 的 AI 任务编排后端系统。它的重点不是简单调用大模型 API，而是构建面向 LLM / RAG / Agent 工作负载的异步任务编排底座。
-
-当前项目已经覆盖长耗时任务创建、异步调度、状态追踪、失败处理、自动重试、幂等控制、取消、超时、Transactional Outbox、Atomic Task Claim、Task Attempt、Mock LLM 执行、Prompt Template、Model Router、LLM usage metadata、持久化输出片段，以及 RAG 检索前置能力。
+AI Task Orchestrator 是一个基于 Java / Spring Boot 的 AI 任务编排与 RAG 检索后端系统。它的重点不是简单调用大模型 API，而是构建面向 LLM / RAG / Agent 工作负载的可靠异步底座，并在其上逐步扩展文档处理、Embedding、向量检索、检索评估与 RAG 问答能力。
 
 英文一句话定位：
 
-> AI Task Orchestrator is a Java / Spring Boot based backend system for orchestrating long-running AI workloads. It focuses on the reliability foundation behind LLM / RAG / Agent workloads, including asynchronous dispatch, task lifecycle management, transactional outbox, atomic task claiming, retry / cancellation / timeout handling, execution attempts, LLM routing metadata, and a RAG retrieval prototype.
+> AI Task Orchestrator is a Java / Spring Boot backend for orchestrating long-running AI workloads and building a RAG retrieval foundation, including async dispatch, transactional outbox, atomic task claiming, embedding provider abstraction, vector store abstraction, and retrieval evaluation.
 
-当前项目是一个 production-oriented prototype，不是完整 production-grade platform，也不是完整 Agent Runtime。
+当前项目是 **production-oriented prototype**，不是完整 production-grade platform，也不是完整 Agent Runtime。
 
-## 2. Architecture
+---
 
-当前核心架构：
+## 2. 当前能力总览
+
+### Implemented（已实现）
+
+**Reliable Async Task Execution**
+
+- Task lifecycle / state machine
+- RabbitMQ async dispatch
+- Transactional Outbox
+- Atomic Task Claim
+- Task Attempt（`task_attempt` 持久化 + `GET /tasks/{taskId}/attempts`）
+- Retry / cancellation / timeout
+- Idempotent consumption
+- Mock LLM Client
+- Prompt Template
+- Model Router
+- LLM usage metadata
+- Persisted output chunks
+
+**Document & Chunking**
+
+- Document Upload（`.txt` / `.md`）
+- Fixed Chunking / Adaptive Chunking（`DocumentChunker`）
+- chunk metadata：`headingPath`、`startOffset`、`endOffset`、`chunkStrategy`
+
+**Embedding**
+
+- `EmbeddingProvider` 抽象
+- Mock Embedding Provider（默认）
+- OpenAI-compatible Embedding Provider
+- Local Embedding Worker provider integration（Java 侧接入）
+- provider / model / dimension metadata 保存与校验
+
+**Retrieval & Evaluation**
+
+- Document embedding generation（`POST /documents/{documentId}/embeddings`）
+- Document search TopK（`POST /documents/search`）
+- Retrieval Evaluation Harness（`POST /evaluations/retrieval`）
+- Recall@K / Precision@K / HitRate@K / MRR / NDCG@K / ContextPrecision@K
+- Evaluation Dataset Seed（`retrieval-corpus-v1.md` + `retrieval-benchmark-v1.json`）
+- Evidence Mapper（expectedEvidenceIds → expectedChunkIds）
+- Fixed vs Adaptive Chunking Comparison（测试 harness）
+- Embedding Provider Benchmark Comparison（测试 harness）
+
+**VectorStore**
+
+- `VectorStore` 抽象
+- `ExactCosineVectorStore`（默认 baseline）
+- `QdrantVectorStore`（显式配置时启用）
+- VectorStore Benchmark Harness（测试 harness，baseline vs candidate）
+
+**RAG（基础链路）**
+
+- RAG Answer with Citation API（`POST /rag/answer`，当前基于 Mock LLM + 检索结果）
+
+**工程化**
+
+- Flyway migration
+- Docker Compose（MySQL / RabbitMQ）
+- GitHub Actions CI
+
+### Prototype / Experimental（原型或实验性实现）
+
+以下能力代码已存在，但不应表述为 production-ready：
+
+- **Local Embedding Worker**：Python FastAPI + sentence-transformers，需手工启动，默认测试不依赖
+- **QdrantVectorStore**：REST 接入 Qdrant，需手工启动 Qdrant 并配置 `app.vector-store.provider=qdrant`
+- **OpenAI-compatible embedding**：需配置 `OPENAI_API_KEY` 与 `app.embedding.provider=openai`，默认测试不调用
+- **Exact vs candidate VectorStore benchmark**：通过 `VectorStoreBenchmarkComparisonTest` 等测试验证，不进入默认 CI 外部依赖
+- **Embedding Provider benchmark comparison**：通过测试 harness 对比 mock / fake candidate provider
+- **RAG Answer**：链路已打通，但 LLM 仍为 Mock，未做 Generation Evaluation
+
+### Not Implemented Yet（尚未实现）
+
+- Production-grade RAG answer / generation quality governance
+- Rerank
+- Hybrid Search / BM25
+- Auth / tenant / quota
+- API rate limit
+- Production observability dashboard（完整 metrics pipeline）
+- Distributed worker registry
+- Agent Runtime
+- KV Cache-aware scheduling
+- Production-grade Qdrant deployment（Docker Compose 集成、健康检查、模型缓存治理）
+- Real billing / subscription system
+- Evaluation result persistence
+- Generation Evaluation（Faithfulness、LLM-as-a-judge 等）
+
+---
+
+## 3. 系统架构概览
+
+**任务编排链路**
 
 ```text
 HTTP API
 -> TaskService / DocumentService
--> MySQL
-   -> task
-   -> task_event
-   -> task_outbox
-   -> task_attempt
-   -> task_output_chunk
-   -> document
-   -> document_chunk
-   -> document_chunk_embedding
+-> MySQL（task / task_event / task_outbox / task_attempt / document / document_chunk / document_chunk_embedding）
 -> Outbox Dispatcher
 -> RabbitMQ
 -> Consumer
 -> Atomic Task Claim
 -> TaskExecutionService
--> Prompt Template
--> ModelRouter
--> MockLlmClient
--> task_attempt / task / task_output_chunk 更新
+-> Prompt Template / ModelRouter / LlmClient
+-> task_attempt / task_output_chunk 更新
 ```
 
-RAG 检索原型架构：
+**RAG 检索链路**
 
 ```text
 Document Upload
 -> Adaptive Chunking
--> document_chunk
--> MockEmbeddingClient
--> document_chunk_embedding
--> Query embedding
--> Java in-memory cosine similarity exact scan
--> TopK document chunks
+-> EmbeddingProvider（mock / openai / local-worker）
+-> VectorStore（exact / qdrant）
+-> Document Search TopK
+-> RetrievalEvaluation / RAG Answer
 ```
 
-## 3. Core Flow: Outbox + Atomic Claim + Attempt
+两层配置分离：
 
-README 旧流程里曾经是：
+- `app.embedding.provider`：文本如何生成向量
+- `app.vector-store.provider`：向量如何存储与检索
 
-```text
-用户提交任务
--> task 入库
--> 直接发送 RabbitMQ
--> Consumer 执行
-```
+---
 
-当前真实流程已经升级为：
+## 4. 核心链路一：Reliable Async Task Execution
 
 ```text
 POST /tasks
@@ -71,375 +145,187 @@ POST /tasks
 -> task_event 写入 TASK_CREATED
 -> task_outbox 写入 TASK_DISPATCH_REQUESTED
 -> 数据库事务提交
--> Outbox Dispatcher 扫描 PENDING / FAILED outbox
--> outbox 原子 claim：PENDING / FAILED -> PROCESSING
+-> Outbox Dispatcher 扫描并 claim outbox
 -> 发送 RabbitMQ
--> outbox 标记 SENT
 -> Consumer 接收 TaskDispatchMessage
--> task 原子 claim：PENDING / RETRY_PENDING -> RUNNING
--> 创建 task_attempt，status = RUNNING
--> 渲染 Prompt Template
--> ModelRouter 选择模型
--> 调用 MockLlmClient
--> 保存 attempt metadata
--> 保存 task_output_chunk
--> task_attempt -> SUCCESS / FAILED / CANCELLED
+-> Atomic Claim：PENDING / RETRY_PENDING -> RUNNING
+-> 创建 task_attempt
+-> Prompt Template + ModelRouter + MockLlmClient
+-> 保存 attempt metadata / output chunks
 -> task -> SUCCESS / RETRY_PENDING / FAILED / CANCELLED
 ```
 
-关键说明：
+要点：
 
-1. `createTask` 不再直接发送 RabbitMQ。
-2. RabbitMQ 投递由 `Outbox Dispatcher` 负责。
-3. Consumer 入口通过 atomic claim 防止重复执行。
-4. `task_attempt` 用于保存每次执行尝试。
-5. `task` 表保存当前状态和最终摘要。
-6. `task_event` 保存状态变化历史。
-7. `task_outbox` 保存可靠投递消息。
+1. `createTask` 不直接发送 RabbitMQ，由 Outbox Dispatcher 负责投递。
+2. Consumer 通过 atomic claim 防止重复执行。
+3. `task_attempt` 记录每次执行尝试，不被 `task` 最终摘要覆盖。
 
-## 4. Features
+---
 
-### 阶段 0：Reliable Async Task System
-
-- task lifecycle
-- state machine
-- `task_event`
-- RabbitMQ async dispatch
-- failure handling
-- retry
-- cancellation
-- timeout
-- idempotency
-- Docker Compose 本地 MySQL / RabbitMQ
-
-### 阶段 1：LLM Execution System
-
-- `LlmClient`
-- `MockLlmClient`
-- Prompt Template
-- Model Router
-- LLM usage metadata
-- persisted output chunks
-- `GET /tasks/{taskId}/output-chunks`
-
-### 阶段 2：RAG Retrieval Prototype
-
-当前已经实现 RAG 检索原型：
-
-- Document Upload
-- Adaptive Chunking
-- `headingPath`
-- `startOffset` / `endOffset`
-- `chunkStrategy`
-- `MockEmbeddingClient`
-- `document_chunk_embedding`
-- MySQL `TEXT` vector storage
-- Java in-memory cosine similarity exact scan
-- `POST /documents/{documentId}/embeddings`
-- `POST /documents/search`
-
-### 阶段 2.2.x：Production Hardening
-
-- GitHub Actions CI
-- baseline tests
-- atomic task claim
-- transactional outbox
-- outbox dispatcher
-- reliable dispatch
-- `task_attempt`
-- structured logs baseline
-
-当前 README 不声明已经完成完整 metrics pipeline。后续如果真正接入 Micrometer / Actuator / Prometheus，再更新为已实现。
-
-## 5. API
-
-### 正式任务 API
-
-| Method | Path | 说明 |
-| --- | --- | --- |
-| `POST` | `/tasks` | 创建 AI 任务 |
-| `GET` | `/tasks/{taskId}` | 查询任务详情 |
-| `POST` | `/tasks/{taskId}/cancel` | 取消任务 |
-| `GET` | `/tasks/{taskId}/output-chunks` | 查询持久化输出片段 |
-
-`GET /tasks/{taskId}/attempts` 当前尚未作为 Controller API 暴露。它可以作为后续版本能力，用于展示 `task_attempt` 执行历史。
-
-### 正式文档 / 检索 API
-
-| Method | Path | 说明 |
-| --- | --- | --- |
-| `POST` | `/documents` | 上传 `.txt` / `.md` 文档 |
-| `GET` | `/documents/{documentId}` | 查询文档详情 |
-| `GET` | `/documents/{documentId}/chunks` | 查询文档 chunks |
-| `POST` | `/documents/{documentId}/embeddings` | 为文档 chunks 生成 Mock Embedding |
-| `POST` | `/documents/search` | 根据 query 搜索 TopK chunks |
-
-### Development / Internal API
-
-| Method | Path | 说明 |
-| --- | --- | --- |
-| `POST` | `/dev/tasks/{taskId}/dispatch` | 本地开发测试重复投递 |
-| `PATCH` | `/tasks/{taskId}/status` | 历史开发调试状态接口 |
-
-`PATCH /tasks/{taskId}/status` 不应作为正式用户 API 暴露。后续计划迁移为 `/dev/tasks/{taskId}/status`，并只在 dev profile 下启用。
-
-## 6. Data Model
-
-主要表职责：
-
-- `task`：任务当前状态和最终摘要。
-- `task_event`：任务状态变化事件历史。
-- `task_outbox`：待投递消息，支撑 Transactional Outbox。
-- `task_attempt`：每次执行尝试的审计记录。
-- `task_output_chunk`：LLM 输出分块。
-- `document`：上传文档元信息。
-- `document_chunk`：文档切分片段和 metadata。
-- `document_chunk_embedding`：chunk embedding 派生数据。
-
-职责边界：
-
-- `task` 表不是所有执行历史，只保存当前状态和最终摘要。
-- `task_event` 保存生命周期事件，例如创建、状态变化。
-- `task_outbox` 保存可靠投递消息，解决 DB 与 MQ 的 dual write problem。
-- `task_attempt` 保存每次执行证据，包括 provider、model、prompt、token、latency、error、status。
-- `task_output_chunk` 保存输出片段，支撑增量输出查询。
-- `document_chunk_embedding` 保存由 chunk 派生出的 Mock vector 数据。
-
-## 7. Reliability Design
-
-### State Machine
-
-状态机约束任务生命周期，防止终态任务重新进入 RUNNING。
-
-主要状态：
-
-- `PENDING`
-- `RUNNING`
-- `RETRY_PENDING`
-- `SUCCESS`
-- `FAILED`
-- `CANCELLED`
-
-终态：
-
-- `SUCCESS`
-- `FAILED`
-- `CANCELLED`
-
-### Retry
-
-任务失败后，如果仍有重试次数，可以进入 `RETRY_PENDING`。重试由 `retryCount`、`maxRetry`、`nextRetryAt` 和调度器配合完成。
-
-### Cancellation
-
-任务支持等待中取消，也支持 RUNNING 任务协作式取消。执行线程会定期检查任务是否已被取消。
-
-### Timeout
-
-任务进入 RUNNING 时设置 `timeoutAt`。超时扫描器会把到期 RUNNING 任务标记为 FAILED。执行线程在写 SUCCESS 前会再次检查任务是否仍是 RUNNING，避免覆盖超时结果。
-
-### Atomic Task Claim
-
-Consumer 执行任务前必须通过数据库原子条件更新：
+## 5. 核心链路二：RAG Retrieval / VectorStore
 
 ```text
-PENDING / RETRY_PENDING -> RUNNING
+POST /documents（上传）
+-> DocumentChunker 切分
+-> POST /documents/{documentId}/embeddings
+-> EmbeddingProvider 生成向量
+-> VectorStore.upsert（默认 ExactCosineVectorStore 写入 document_chunk_embedding）
+-> POST /documents/search
+-> VectorStore.search（exact cosine 或 Qdrant）
+-> POST /evaluations/retrieval（检索指标评估）
+-> POST /rag/answer（检索 + Mock LLM 回答 + citation）
 ```
 
-如果更新行数为 `0`，说明任务已经被其他 Consumer claim，或已经取消、失败、成功、超时，当前消息会被安全忽略。
+默认配置：
 
-Atomic Claim 解决多 Consumer / 重复 MQ 消息下的重复执行风险。
-
-### Transactional Outbox
-
-`createTask` 在同一个数据库事务中写入：
-
-- `task`
-- `task_event`
-- `task_outbox`
-
-RabbitMQ 投递不再发生在 `createTask` 内，而是由 Outbox Dispatcher 异步完成。
-
-Transactional Outbox 解决 DB 和 MQ 的 dual write problem：
-
-- DB 回滚但 MQ 已发出。
-- DB 提交成功但 MQ 发送失败。
-
-Outbox 本质仍是 at-least-once 投递，因此仍然需要 Consumer 侧幂等和 atomic claim。
-
-### Task Attempt
-
-`task_attempt` 记录每次执行尝试，避免重试历史被 `task` 表最终摘要覆盖。
-
-它可以支撑：
-
-- retry 审计；
-- 失败诊断；
-- 模型和 provider 分析；
-- token 和 latency 分析；
-- 后续成本统计。
-
-### CI / Tests
-
-GitHub Actions 会在 `push` / `pull_request` 时运行 Maven test。
-
-当前项目已经有 baseline tests 覆盖状态机、Prompt 渲染、Chunking、Embedding 工具、Mock Embedding、Atomic Claim、Outbox、Task Attempt 等关键逻辑。
-
-本地运行测试：
-
-```powershell
-.\mvnw.cmd test
+```properties
+app.embedding.provider=mock
+app.vector-store.provider=exact
 ```
 
-README 不编造测试数量。最新 Tests run 数字以本地或 CI 实际输出为准。
+启用 Qdrant（手工验证，非默认测试）：
 
-## 8. RAG Retrieval Prototype
-
-当前已经实现：
-
-- Mock Embedding
-- `document_chunk_embedding`
-- MySQL `TEXT` vector storage
-- Java in-memory cosine similarity exact scan
-- document-level semantic search prototype
-- `POST /documents/search`
-
-当前检索流程：
-
-```text
-上传文档
--> Adaptive Chunking
--> 保存 document_chunk
--> 生成 Mock chunk embedding
--> 保存 document_chunk_embedding
--> query 生成 query embedding
--> Java 内存中计算 cosine similarity
--> 返回 TopK chunks 和 metadata
+```properties
+app.vector-store.provider=qdrant
+app.vector-store.qdrant.base-url=http://127.0.0.1:6333
+app.vector-store.qdrant.initialize-collection=true
 ```
 
-尚未实现：
+---
 
-- Real Embedding Provider
-- Vector DB
-- ANN Search
-- Hybrid Search
-- Rerank
-- RAG Answer
-- Citation
-- Retrieval Evaluation Harness
+## 6. 本地快速启动
 
-当前是 RAG retrieval prototype，不是完整 production RAG system。
-
-## 9. Local Development
-
-详细本地开发说明：
-
-[docs/local-dev.md](docs/local-dev.md)
-
-PowerShell 进入项目目录：
+详细说明见 [docs/local-dev.md](docs/local-dev.md)。
 
 ```powershell
 cd E:\code\ai-task-orchestrator
-```
-
-PowerShell 中不要使用：
-
-```powershell
-cd /d E:\code\ai-task-orchestrator
-```
-
-启动本地基础设施：
-
-```powershell
 docker compose up -d
-docker compose ps
-```
-
-运行测试：
-
-```powershell
-.\mvnw.cmd test
-```
-
-使用 docker profile 启动 Spring Boot：
-
-```powershell
 .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=docker"
 ```
 
-RabbitMQ 管理页面：
+PowerShell 不要使用 `cd /d E:\code\ai-task-orchestrator`。
 
-- URL: <http://localhost:15672>
-- username: `guest`
-- password: `guest`
+---
 
-## 10. CI & Tests
+## 7. 可运行 Demo 入口
 
-CI 使用 GitHub Actions。
+| 能力 | HTTP 入口 |
+| --- | --- |
+| 创建任务 | `POST /tasks` |
+| 查询任务 | `GET /tasks/{taskId}` |
+| 查询 attempts | `GET /tasks/{taskId}/attempts` |
+| 查询 output chunks | `GET /tasks/{taskId}/output-chunks` |
+| 上传文档 | `POST /documents` |
+| 生成 embedding | `POST /documents/{documentId}/embeddings` |
+| 文档检索 | `POST /documents/search` |
+| 检索评估 | `POST /evaluations/retrieval` |
+| RAG 问答 | `POST /rag/answer` |
 
-触发时机：
+开发/调试接口（非生产）：
 
-- `push`
-- `pull_request`
+| 能力 | HTTP 入口 |
+| --- | --- |
+| 重复投递测试 | `POST /dev/tasks/{taskId}/dispatch` |
+| 修改任务状态 | `PATCH /dev/tasks/{taskId}/status`（需 `dev` profile） |
 
-CI 行为：
+更多请求示例见 [docs/api-examples.md](docs/api-examples.md)。
 
-- checkout 代码；
-- 设置 Java 21；
-- 运行 Maven test。
+---
 
-本地测试命令：
+## 8. 测试与评估
+
+**默认单元/集成测试**
 
 ```powershell
 .\mvnw.cmd test
 ```
 
-如果后续要在 README 中写测试数量，只能根据最新本地或 CI 输出更新，不要手写猜测数字。
+默认测试要求：
 
-## 11. Current Limitations
+- 不启动 Docker（CI 除外）
+- 不连接 Qdrant
+- 不访问 OpenAI API
+- 不启动 Python embedding worker
+- 不下载 embedding 模型
+- 不访问外部网络
 
-当前项目边界：
+测试数量以本地或 CI 实际输出为准，不要手写猜测数字。
 
-- 当前使用 `MockLlmClient`，不是真实 LLM。
-- 当前使用 `MockEmbeddingClient`，不代表真实语义效果。
-- `embedding_vector` 使用 MySQL `TEXT`，不适合生产级向量检索。
-- search 是 Java in-memory exact scan，不适合大规模。
-- 没有 Vector DB。
-- 没有 ANN search。
-- 没有 RAG Answer。
-- 没有 Citation。
-- 没有 Retrieval Evaluation。
-- 没有 Rerank。
-- 没有 Hybrid Search。
-- 还不是完整 Agent Runtime。
-- 还不是完整 production-grade orchestration platform。
+**Benchmark / Comparison（测试 harness，非生产 API）**
 
-## 12. Roadmap
+| Harness | 说明 |
+| --- | --- |
+| `BenchmarkRunnerEvidenceMapperTest` | benchmark seed + evidence 映射 + evaluation |
+| `EmbeddingProviderBenchmarkComparisonTest` | baseline vs candidate embedding provider |
+| `VectorStoreBenchmarkComparisonTest` | ExactCosineVectorStore vs fake candidate |
+| `ChunkingStrategyComparisonTest` | Fixed vs Adaptive chunking |
 
-后续路线：
+这些能力通过测试与 benchmark runner 验证，尚未暴露为独立 HTTP benchmark API。
 
-- V2.2.6 Task Attempt Read API & Dev Status Endpoint
-  - `GET /tasks/{taskId}/attempts`
-  - `PATCH /tasks/{taskId}/status` 迁移到 `/dev/tasks/{taskId}/status`
-- V2.2.7 Outbox Boundary & Minimal Metrics Polish
-  - claim / send / mark result 事务边界拆分
-  - 最小 metrics
-- V2.3 RAG Answer with Citation
-- V2.4 Chunking Evaluation
-- V2.5 Real Embedding Provider
-- V2.6 Vector DB Selection
-- V2.7 Retrieval Policy & VIP Search
-- Agent Runtime
-- KV Cache-aware Scheduling
+---
 
-## 13. Interview Docs
+## 9. 当前限制
 
-面试 deep-dive 文档：
+- LLM 默认仍为 Mock，不代表真实生成质量。
+- Embedding 默认仍为 Mock，不代表真实语义效果。
+- RAG Answer 基于 Mock LLM，未做 Generation Evaluation。
+- `ExactCosineVectorStore` 为 exact scan，不适合大规模生产检索。
+- Qdrant 接入为实验性实现，无 Docker Compose 集成与生产级运维。
+- Local Embedding Worker 需手工启动 Python 环境。
+- 无 Rerank、Hybrid Search、多租户、鉴权、限流、完整 observability。
+- 不是完整 Agent Runtime。
 
-- [V2.2 Mock Embedding & Vector Search](docs/interview/V2.2-mock-embedding-vector-search.md)
-- [V2.2.x Production Hardening](docs/interview/V2.2.x-production-hardening.md)
+---
 
-更多分版本面试文档见：
+## 10. Roadmap
 
-[docs/interview](docs/interview)
+从当前真实状态继续：
 
+1. **E2E Demo Golden Path** — 端到端演示脚本与验收路径
+2. **Atomic Finalization** — 任务终态与 outbox 边界进一步硬化
+3. **Qdrant Manual Verification** — 手工 external Qdrant benchmark 与运行手册
+4. **API Error Response Standardization** — 统一错误响应格式
+5. **Local Embedding Worker Packaging** — Docker 化与依赖治理
+6. **Retrieval Policy & VIP Search** — 按用户计划调整 topK / 检索策略
+7. **Rerank** — 二阶段排序
+8. **Hybrid Search** — 向量 + 关键词混合检索
+9. **RAG Answer Hardening** — 生产级 citation / generation 质量治理
+10. **Generation Evaluation** — Faithfulness、Answer Relevance、LLM-as-a-judge
+11. **Agent Runtime**
+12. **KV Cache-aware Scheduling**
+
+已完成能力（V2.4–V2.6.x）不再列入待做：Retrieval Evaluation、EmbeddingProvider、Local Worker 接入、VectorStore 抽象、QdrantVectorStore、VectorStore Benchmark Harness。
+
+---
+
+## 11. 面试文档索引
+
+分版本 deep-dive 见 [docs/interview](docs/interview)，例如：
+
+| 版本 | 主题 |
+| --- | --- |
+| V0.x | Task / Outbox / Retry / RabbitMQ |
+| V1.x | LLM / Prompt / Model Router / Output Chunks |
+| V2.1 | Document Upload & Chunking |
+| V2.2 | Mock Embedding & Vector Search |
+| V2.2.x | Production Hardening |
+| V2.3 | RAG Answer with Citation |
+| V2.4.x | Retrieval Evaluation / Metrics / Dataset / Benchmark |
+| V2.5 | Real Embedding Provider |
+| V2.5.1 | Embedding Provider Benchmark Comparison |
+| V2.5.2 | Local Embedding Worker |
+| V2.6 | VectorStore Abstraction |
+| V2.6.1 | Qdrant Integration |
+| V2.6.2 | VectorStore Benchmark |
+
+简历与面试表达见 [docs/resume-interview.md](docs/resume-interview.md)。
+
+---
+
+## 相关文档
+
+- [docs/local-dev.md](docs/local-dev.md)
+- [docs/api-examples.md](docs/api-examples.md)
+- [docs/project-structure.md](docs/project-structure.md)
+- [docs/resume-interview.md](docs/resume-interview.md)

@@ -1,274 +1,225 @@
 # 本地开发环境
 
-本文说明 `ai-task-orchestrator` 在本地开发时如何使用 Docker Compose 启动 MySQL / RabbitMQ，并用 `docker` profile 启动 Spring Boot 应用。
+本文说明 `ai-task-orchestrator` 在 Windows 本地如何使用 Docker Compose 启动 MySQL / RabbitMQ，如何启动 Spring Boot，以及如何手工验证 Embedding / VectorStore / Worker 等实验性能力。
 
-## 前置要求
+## 一、前置要求
 
-- 已安装 JDK 21 或更高版本
-- 已安装 Docker Desktop
-- 已安装 Maven Wrapper 所需环境
-- 当前目录为项目根目录：`ai-task-orchestrator`
+- JDK 21+
+- Docker Desktop
+- Maven Wrapper（项目自带 `mvnw.cmd`）
+- PowerShell
 
-Spring Boot 应用仍然在本机 IDEA 或命令行启动，不放进 Docker 容器。
+进入项目目录：
 
-## 启动 MySQL / RabbitMQ
+```powershell
+cd E:\code\ai-task-orchestrator
+```
 
-项目根目录已提供 `docker-compose.yml`。
+不要使用：
 
-启动基础环境：
+```powershell
+cd /d E:\code\ai-task-orchestrator
+```
+
+Spring Boot 在本机启动，不放进 Docker 容器（MySQL / RabbitMQ 除外）。
+
+---
+
+## 二、启动 MySQL / RabbitMQ
 
 ```powershell
 docker compose up -d
-```
-
-查看容器状态：
-
-```powershell
 docker compose ps
 ```
 
-停止基础环境：
+| 服务 | 本机端口 |
+| --- | --- |
+| MySQL | `3307` → 容器 `3306` |
+| RabbitMQ AMQP | `5672` |
+| RabbitMQ 管理台 | `15672`（guest / guest） |
+
+`docker` profile 连接：
+
+- MySQL: `localhost:3307/ai_task_orchestrator`
+- RabbitMQ: `localhost:5672`
+
+停止：
 
 ```powershell
 docker compose down
 ```
 
-当前 Compose 会启动：
+---
 
-| 服务 | 镜像 | 本机端口 | 容器端口 |
-| --- | --- | --- | --- |
-| MySQL | `mysql:8.0` | `3307` | `3306` |
-| RabbitMQ | `rabbitmq:3-management` | `5672`, `15672` | `5672`, `15672` |
-
-MySQL 默认信息：
-
-```text
-host: localhost
-port: 3307
-database: ai_task_orchestrator
-username: root
-password: 123456
-```
-
-RabbitMQ 默认信息：
-
-```text
-host: localhost
-amqp port: 5672
-management ui: http://localhost:15672
-username: guest
-password: guest
-```
-
-## 启动 Spring Boot
-
-使用 Docker Compose 环境时，需要启用 `docker` profile。
-
-在 IDEA 中启动：
-
-```text
-Active profiles: docker
-```
-
-用命令行启动：
+## 三、启动 Spring Boot
 
 ```powershell
 .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=docker"
 ```
 
-`docker` profile 会读取：
+IDEA 中设置 Active profiles: `docker`。
 
-```text
-src/main/resources/application-docker.properties
+配置读取 `src/main/resources/application-docker.properties`（JDBC 端口 3307）。
+
+---
+
+## 四、默认 Provider 配置
+
+`application.properties` 默认值（本地非 docker profile 亦类似）：
+
+```properties
+app.embedding.provider=mock
+app.vector-store.provider=exact
 ```
 
-该配置会连接：
+含义：
 
-- MySQL: `localhost:3307/ai_task_orchestrator`
-- RabbitMQ: `localhost:5672`
+- 文本向量由 Mock Embedding 生成
+- 向量检索由 `ExactCosineVectorStore` 完成（复用 `document_chunk_embedding`）
 
-## 验收 MySQL
+无需 OpenAI API key、Python worker 或 Qdrant 即可跑通 document search / retrieval evaluation / RAG answer（Mock LLM）。
 
-确认 MySQL 容器运行：
+---
+
+## 五、OpenAI-compatible Embedding（手工，非默认测试）
+
+```properties
+app.embedding.provider=openai
+app.embedding.openai.api-key=${OPENAI_API_KEY}
+app.embedding.openai.model=text-embedding-3-small
+app.embedding.openai.dimension=1536
+```
+
+需有效 API key 与外部网络。默认 `.\mvnw.cmd test` 不调用 OpenAI。
+
+---
+
+## 六、Local Embedding Worker（手工，非默认测试）
+
+Worker 路径：`workers/embedding-worker/`
 
 ```powershell
-docker compose ps
+cd E:\code\ai-task-orchestrator\workers\embedding-worker
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn main:app --host 127.0.0.1 --port 8001
 ```
 
-也可以连接数据库：
+Java 侧配置：
+
+```properties
+app.embedding.provider=local-worker
+app.embedding.local-worker.base-url=http://127.0.0.1:8001
+app.embedding.local-worker.model=sentence-transformers/all-MiniLM-L6-v2
+app.embedding.local-worker.dimension=384
+```
+
+首次运行会下载或加载模型，耗时不定。默认 Maven test 不启动 Python worker。
+
+---
+
+## 七、Qdrant（手工，非默认测试）
+
+启动 Qdrant（示例，需本机 Docker）：
 
 ```powershell
-docker exec -it ai-task-mysql mysql -uroot -p123456 ai_task_orchestrator
+cd E:\code\ai-task-orchestrator
+docker run -p 6333:6333 -p 6334:6334 -v ${PWD}\qdrant_storage:/qdrant/storage qdrant/qdrant
 ```
 
-进入 MySQL 后查看表：
+Java 侧配置：
 
-```sql
-SHOW TABLES;
+```properties
+app.vector-store.provider=qdrant
+app.vector-store.qdrant.base-url=http://127.0.0.1:6333
+app.vector-store.qdrant.collection-name=ai_task_orchestrator_chunks
+app.vector-store.qdrant.initialize-collection=true
 ```
 
-如果 Spring Boot 已经启动成功，Flyway 应该已经创建业务表和 `flyway_schema_history`。
+说明：
 
-## 验收 RabbitMQ
+- Qdrant 未纳入项目 `docker-compose.yml`
+- 默认测试使用 fake client，不连接真实 Qdrant
+- 这是实验性手工验证路径，不是 production deployment
 
-打开 RabbitMQ 管理页面：
+可与 local-worker 组合：local-worker 生成向量 + Qdrant 存储检索。
 
-```text
-http://localhost:15672
+---
+
+## 八、运行测试
+
+```powershell
+cd E:\code\ai-task-orchestrator
+.\mvnw.cmd test
 ```
 
-登录：
+默认测试保证：
 
-```text
-username: guest
-password: guest
-```
+- 不启动 Docker（本地可选）
+- 不连接 Qdrant
+- 不访问 OpenAI API
+- 不启动 Python embedding worker
+- 不下载 embedding 模型
+- 不访问外部网络
 
-可以检查：
+测试数量以命令输出为准。
 
-- `Queues and Streams` 中是否有任务队列
-- `Exchanges` 中是否有任务交换机
-- 应用创建任务后队列消息是否被消费
+---
 
-## 验收 Flyway
+## 九、dev profile 调试接口
 
-Spring Boot 使用 `docker` profile 启动后，查看启动日志中是否出现类似内容：
-
-```text
-Successfully validated ... migrations
-Schema `ai_task_orchestrator` is up to date
-```
-
-也可以在 MySQL 中查看：
-
-```sql
-SELECT version, description, success
-FROM flyway_schema_history
-ORDER BY installed_rank;
-```
-
-期望所有迁移脚本 `success = 1`。
-
-## 验收 API
-
-启动 Spring Boot 后，创建一个正常任务：
+启用 `dev` profile 后可使用：
 
 ```http
-POST http://localhost:8080/tasks
-Content-Type: application/json
+PATCH http://localhost:8080/dev/tasks/{taskId}/status
 ```
 
-```json
-{
-  "prompt": "normal task"
-}
-```
+用于状态机调试，不是生产 API。
 
-创建后会返回 `taskId`。
+---
 
-查询任务：
-
-```http
-GET http://localhost:8080/tasks/{taskId}
-```
-
-正常情况下，任务会经历：
-
-```text
-PENDING -> RUNNING -> SUCCESS
-```
-
-如果需要验证失败重试，可以创建包含 `fail` 的任务：
-
-```json
-{
-  "prompt": "please fail this task"
-}
-```
-
-## 常见问题
+## 十、常见问题
 
 ### 端口冲突
 
-MySQL 使用本机 `3307`，避免和本机已有 MySQL 的 `3306` 冲突。
-
-如果 `3307` 仍然被占用，可以修改 `docker-compose.yml`：
-
-```yaml
-ports:
-  - "3308:3306"
-```
-
-同时修改 `application-docker.properties` 中的 JDBC 端口。
-
-RabbitMQ 使用：
-
-```text
-5672
-15672
-```
-
-如果端口被占用，需要先关闭占用端口的本机服务，或调整 Compose 端口映射。
+MySQL 映射 `3307` 是为避免与本机 `3306` 冲突。若仍冲突，修改 `docker-compose.yml` 与 `application-docker.properties` 保持一致。
 
 ### MySQL 连接失败
 
-先确认容器状态：
+1. `docker compose ps` 确认容器 healthy
+2. 确认使用 `docker` profile
+3. JDBC 端口应为 `3307`（docker profile）
 
-```powershell
-docker compose ps
-```
+### RabbitMQ 连接失败
 
-查看 MySQL 日志：
-
-```powershell
-docker logs ai-task-mysql
-```
-
-常见原因：
-
-- MySQL 容器还没完全启动
-- `application-docker.properties` 没有启用
-- JDBC 端口仍然指向 `3306`
-- 数据库名不是 `ai_task_orchestrator`
-
-确认 Spring Boot 启动时使用了：
-
-```text
-docker
-```
-
-profile。
-
-### RabbitMQ 端口占用
-
-如果 RabbitMQ 启动失败，先查看端口是否被占用：
-
-```powershell
-netstat -ano | findstr :5672
-netstat -ano | findstr :15672
-```
-
-查看 RabbitMQ 日志：
-
-```powershell
-docker logs ai-task-rabbitmq
-```
-
-如果本机已经运行了 RabbitMQ，可以关闭本机 RabbitMQ，或修改 Compose 端口映射。
+检查 `5672` / `15672` 是否被占用：`netstat -ano | findstr :5672`
 
 ### Flyway 校验失败
-
-如果 Flyway 报错，先确认数据库是否是新的 `ai_task_orchestrator`，并查看：
-
-```sql
-SELECT * FROM flyway_schema_history;
-```
-
-本地开发环境如果需要重建数据库，可以停止并删除 volume：
 
 ```powershell
 docker compose down -v
 docker compose up -d
 ```
 
-注意：`docker compose down -v` 会删除 Compose 创建的数据卷，本地数据库数据会被清空。
+`-v` 会删除 Compose 数据卷，本地数据清空。
+
+### Embedding / Search 无结果
+
+1. 确认已 `POST /documents/{documentId}/embeddings`
+2. search 使用的 provider/model 与 embedding 时一致（默认均为 mock）
+3. 切换 provider 后需重新 embed
+
+### 切换 Qdrant 后检索异常
+
+1. 确认 Qdrant 容器运行中
+2. `initialize-collection=true` 且 dimension 与 embedding 一致
+3. 同一 collection 不应混用不同 embedding space
+
+---
+
+## 相关文档
+
+- [README.md](../README.md)
+- [docs/api-examples.md](api-examples.md)
+- [docs/project-structure.md](project-structure.md)

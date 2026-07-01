@@ -2,312 +2,321 @@
 
 ## 一、文档目的
 
-本文档用于整理 AI Task Orchestrator 当前阶段的简历表达、面试表达、技术亮点、当前边界和后续扩展方向。
+本文档整理 AI Task Orchestrator 当前阶段的简历表达、面试表达、技术亮点、诚实边界，以及 benchmark 数据存在 / 不存在时的写法模板。
+
+---
 
 ## 二、项目一句话描述
 
-AI Task Orchestrator 是一个基于 Spring Boot、RabbitMQ、MySQL 和 Flyway 构建的异步 AI 任务编排系统，当前阶段重点实现任务生命周期管理、异步调度、状态机、事件追踪、失败处理、重试、幂等、取消、超时、Mock LLM、Prompt Template、Model Router、LLM usage metadata、持久化增量输出和文档上传切分，为后续接入真实 LLM / RAG / Agent Runtime 打基础。
+AI Task Orchestrator 是一个基于 Spring Boot、RabbitMQ、MySQL 和 Flyway 构建的异步 AI 任务编排与 RAG 检索后端系统。当前已实现可靠任务执行底座（Transactional Outbox、Atomic Claim、Task Attempt）、文档上传与 chunking、EmbeddingProvider 抽象、VectorStore 抽象、检索评估与基础 RAG 问答链路。
+
+---
 
 ## 三、简历版本描述
 
-一句话版本：
+**一句话版本**
 
-基于 Spring Boot、RabbitMQ、MySQL 和 Flyway 实现异步 AI 任务编排系统，支持任务状态机、失败重试、幂等、取消、超时、Mock LLM、Prompt Template、Model Router 和文档 chunking。
+基于 Spring Boot、RabbitMQ、MySQL 实现异步 AI 任务编排与 RAG 检索后端，支持 Transactional Outbox、Atomic Claim、EmbeddingProvider / VectorStore 抽象、Retrieval Evaluation 与 Mock LLM RAG 问答。
 
-三行版本：
+**三行版本**
 
-AI Task Orchestrator 是一个模拟 AI Agent / LLM 平台长耗时任务执行的后端系统。
-项目使用 RabbitMQ 解耦任务创建与执行，使用状态机、事件表、重试、幂等、取消和超时保证任务生命周期可靠。
-当前已扩展 Mock LLM、Prompt Template、Model Router、LLM usage、output chunks 和文档上传切分，为后续 RAG 和真实模型接入打基础。
+AI Task Orchestrator 模拟 AI Agent / LLM 平台的长耗时任务执行与 RAG 检索场景。
 
-完整项目经历版本：
+项目使用 RabbitMQ + Transactional Outbox 解耦任务创建与执行，用状态机、Task Attempt、重试、幂等、取消和超时保证任务生命周期可靠。
 
-项目背景：真实 AI 任务通常具有长耗时、易失败、需要重试、需要状态追踪、需要取消和超时控制等特点，不能简单同步阻塞 HTTP 请求。
+当前已扩展 Document Upload / Chunking、EmbeddingProvider（mock / OpenAI-compatible / local-worker）、VectorStore（ExactCosine / Qdrant）、Retrieval Evaluation Harness 与 RAG Answer API（Mock LLM）。
 
-技术栈：Java、Spring Boot、Spring Web、Spring Data JPA、MySQL、Flyway、RabbitMQ、Docker Compose、Lombok。
+**完整项目经历版本**
 
-本人工作：
+- 项目背景：真实 AI 任务具有长耗时、易失败、需要重试与状态追踪等特点；RAG 检索需要 chunking、embedding、向量存储与评估体系。
+- 技术栈：Java 21、Spring Boot、Spring Data JPA、MySQL、Flyway、RabbitMQ、Docker Compose、Python FastAPI（local worker 原型）。
+- 本人工作：
+  - 设计任务状态机、Transactional Outbox、Atomic Claim 与 Task Attempt。
+  - 实现 RabbitMQ 异步调度、失败重试、幂等消费、取消与超时。
+  - 设计 LLM Client 抽象、Prompt Template、Model Router。
+  - 实现 Document Upload、Fixed / Adaptive Chunking。
+  - 设计 EmbeddingProvider 抽象，接入 Mock / OpenAI-compatible / Local Worker。
+  - 设计 VectorStore 抽象，实现 ExactCosineVectorStore 与 QdrantVectorStore 原型。
+  - 实现 Retrieval Evaluation Harness（Recall@K、MRR、NDCG@K 等）与 Benchmark Harness。
+  - 打通 RAG Answer with Citation 基础链路（Mock LLM）。
+- 核心成果：完成可本地运行、可验收、可扩展的 AI 任务编排与 RAG 检索底座。
+- 工程亮点：Outbox 一致性、Atomic Claim、provider 抽象、评估 harness、测试与外部依赖隔离。
 
-- 设计任务状态机与任务事件表。
-- 实现 RabbitMQ 异步调度和 Consumer 执行。
-- 实现失败处理、重试、幂等、取消、超时。
-- 设计 LLM Client 抽象和 Mock Provider。
-- 接入 Prompt Template、Model Router、LLM usage metadata。
-- 实现持久化 output chunks。
-- 实现 `.txt/.md` 文档上传与 chunking。
-- 编写本地开发和验收文档。
-
-核心成果：完成一个可本地运行、可验收、可扩展的 AI 任务编排底座。
-
-工程亮点：状态机约束、事件追踪、异步调度、失败恢复、幂等控制、数据库迁移、Mock LLM 解耦、文档处理前置能力。
+---
 
 ## 四、简历 bullet 示例
 
+**Reliable Async Task Execution**
+
 - 基于 Spring Boot 和 RabbitMQ 实现异步任务调度，将任务创建与后台执行解耦。
-- 设计任务状态机和 `task_event`，记录任务生命周期并防止非法状态流转。
+- 设计 Transactional Outbox，保证任务入库与 MQ 投递的一致性。
+- 实现 Atomic Claim 与 Task Attempt，记录每次 LLM 执行明细。
+- 设计任务状态机和 `task_event`，防止非法状态流转。
 - 实现失败处理、自动重试、Consumer 入口幂等、协作式取消和超时扫描。
-- 设计 `LlmClient` 抽象与 `MockLlmClient`，实现任务执行链路与模型调用解耦。
-- 设计 Prompt Template 数据模型与渲染器，保存实际使用的 `renderedPrompt`。
-- 设计 `ModelRouter`，支持用户请求模型与实际执行模型分离。
-- 记录 LLM provider、token usage 和 latency，为后续成本统计打基础。
-- 实现持久化 output chunks，为后续 polling / SSE / WebSocket 输出打基础。
-- 实现 `.txt/.md` 文档上传与 chunking，为后续 Embedding、向量检索和 RAG 问答打基础。
-- 使用 Flyway 管理数据库结构演进，使用 Docker Compose 搭建本地 MySQL / RabbitMQ 环境。
 
-## 五、面试开场怎么讲
+**LLM / Prompt**
 
-这个项目模拟的是 AI Agent / LLM 平台里的长耗时任务执行系统。它用 Spring Boot 提供 API，用 RabbitMQ 解耦任务创建和执行，用 MySQL 保存任务、事件、Prompt 模板、执行结果、输出片段和文档 chunks，用 Flyway 管理数据库迁移。当前已经完成可靠任务系统底座，并用 Mock LLM 模拟模型调用链路，同时支持 Prompt Template、Model Router、LLM usage metadata、持久化 output chunks 和文档上传切分。它还没有接入真实模型和向量数据库，但已经具备后续接入真实 Provider、Embedding 和 RAG 的工程基础。
+- 设计 `LlmClient` 抽象与 `MockLlmClient`，解耦任务执行与模型调用。
+- 设计 Prompt Template 数据模型与渲染器，保存 `renderedPrompt`。
+- 设计 `ModelRouter`，支持 requested model 与实际执行 model 分离。
+- 记录 LLM provider、token usage 和 latency。
 
-## 六、系统架构怎么讲
+**Document / RAG**
+
+- 实现 `.txt/.md` 文档上传与 Fixed / Adaptive Chunking。
+- 设计 `EmbeddingProvider` 抽象，支持 Mock / OpenAI-compatible / Local Worker。
+- 设计 `VectorStore` 抽象，实现 `ExactCosineVectorStore` 与 `QdrantVectorStore` 原型。
+- 实现 Document Search TopK 与 Retrieval Evaluation Harness（Recall@K、MRR、NDCG@K 等）。
+- 实现 RAG Answer with Citation API（当前 Mock LLM）。
+- 编写 VectorStore / Embedding Provider Benchmark Harness，用于对比 baseline 与 candidate。
+
+**工程化**
+
+- 使用 Flyway 管理数据库结构演进。
+- 使用 Docker Compose 搭建本地 MySQL / RabbitMQ 环境。
+- 默认 `mvn test` 不依赖 Qdrant、Python worker、OpenAI API 或外部网络。
+
+---
+
+## 五、没有真实线上数据时怎么写
+
+**原则**
+
+- 不写“提升 X% Recall@K”或“NDCG 提高 Y%”——没有 benchmark 跑分数据就不要写数字。
+- 不写“Qdrant 生产可用”或“Local Worker 已上线”——它们是实验性原型。
+- 不写“已实现 Rerank / Hybrid Search / Agent Runtime”——这些尚未实现。
+- 强调**架构设计、抽象边界、评估 harness、可扩展性**，而不是虚构业务指标。
+
+**推荐表述**
+
+- “设计 EmbeddingProvider / VectorStore 抽象，默认测试使用 mock / exact baseline，Qdrant 与 local-worker 为手工验证路径。”
+- “实现 Retrieval Evaluation Harness，支持 Recall@K、MRR、NDCG@K 等指标计算；benchmark seed 位于测试资源目录。”
+- “实现 VectorStore Benchmark Harness，在测试中对比 baseline 与 candidate 的检索指标与延迟，未暴露为生产 HTTP API。”
+- “RAG Answer API 已打通检索 + citation + Mock LLM 生成链路，LLM 层仍为 Mock，未做 Generation Evaluation。”
+
+**避免表述**
+
+- ❌ “Qdrant 将 Recall@5 提升了 20%。”
+- ❌ “Local Embedding Worker 已在生产环境部署。”
+- ❌ “系统已支持 Hybrid Search 与 Rerank。”
+- ❌ “RAG 回答质量达到生产标准。”
+
+---
+
+## 六、有 benchmark 数据后怎么写（模板，不填不存在的数据）
+
+仅在**真实跑过 benchmark 并保存结果**后，才使用以下模板，并将 `{...}` 替换为实际数据：
+
+```
+在 retrieval benchmark dataset（{dataset_name}，{case_count} cases）上，
+ExactCosineVectorStore baseline 的 Recall@{K} = {baseline_recall}；
+切换为 {candidate_name} 后 Recall@{K} = {candidate_recall}（Δ = {delta}）。
+P95 search latency：baseline {baseline_latency_ms}ms vs candidate {candidate_latency_ms}ms。
+```
+
+```
+Embedding Provider 对比（{provider_a} vs {provider_b}）：
+MRR = {mrr_a} vs {mrr_b}，NDCG@5 = {ndcg_a} vs {ndcg_b}。
+```
+
+**注意**
+
+- 数据来源必须可复现（测试命令、配置、dataset 版本）。
+- 不要跨 embedding space 或不同 chunk 策略直接对比而不说明前提。
+- Qdrant 对比需注明是否真实 Qdrant 实例、collection 配置、embedding provider。
+- Local Worker 对比需注明模型名称、首次加载耗时、是否 warm-up。
+
+---
+
+## 七、面试开场怎么讲
+
+这个项目模拟 AI Agent / LLM 平台里的长耗时任务执行，并在同一底座上扩展 RAG 检索能力。
+
+任务侧：Spring Boot 提供 API，RabbitMQ 解耦创建与执行，Transactional Outbox 保证一致性，Atomic Claim 与 Task Attempt 记录每次执行，状态机 + 重试 + 超时保证生命周期可靠。
+
+RAG 侧：支持文档上传与 chunking，EmbeddingProvider 抽象（默认 mock），VectorStore 抽象（默认 exact cosine），Document Search 与 Retrieval Evaluation API 已可用。Qdrant 与 Local Worker 是实验性手工验证路径。
+
+RAG Answer API 已打通检索 + citation + Mock LLM，但生成质量未做 Generation Evaluation，也不应声称 production-ready。
+
+---
+
+## 八、Reliable Async Task Execution 怎么讲
 
 ```text
-用户请求
--> TaskController / DocumentController
--> Service 层
--> MySQL
--> RabbitMQ Producer
--> RabbitMQ Queue
--> Consumer
--> TaskExecutionService
--> ModelRouter
--> PromptTemplateRenderer
--> LlmClient / MockLlmClient
--> 状态流转
+POST /tasks
+-> TaskService 同事务写 task + task_event + task_outbox
+-> Outbox Dispatcher -> RabbitMQ
+-> Consumer -> Atomic Claim -> TaskAttempt
+-> PromptTemplate / ModelRouter / MockLlmClient
+-> output chunks + 状态更新
 -> RetryScheduler / TimeoutScheduler
 ```
 
-文档处理链路：
+**Transactional Outbox**：避免“DB 已提交但 MQ 未发送”。
 
-```text
-DocumentController
--> DocumentService
--> document
--> document_chunk
-```
+**Atomic Claim**：只有 `PENDING / RETRY_PENDING` 可进入 `RUNNING`，重复消息被忽略。
 
-## 七、为什么用 RabbitMQ
+**Task Attempt**：每次执行单独记录 provider、model、token、latency，便于审计与重试分析。
 
-- HTTP 请求不应该阻塞长耗时任务。
-- MQ 解耦任务创建和任务执行。
-- 支持异步消费。
-- 支持后续扩展多 Worker。
-- 为后续 LLM / RAG / Agent 长任务执行打基础。
+---
 
-## 八、为什么做状态机
+## 九、EmbeddingProvider 怎么讲
 
-- 防止非法状态流转。
-- 明确任务生命周期。
-- 让失败、重试、取消、超时都有统一约束。
-- `SUCCESS` / `FAILED` / `CANCELLED` 是终态。
-- 防止重复消息导致 `SUCCESS -> RUNNING` 等脏状态。
+`EmbeddingProvider` 是统一向量化接口。当前有三种实现：
 
-## 九、为什么做 task_event
+- `MockEmbeddingProvider`（默认）：确定性 mock，测试不依赖外部服务。
+- `OpenAiCompatibleEmbeddingProvider`：需 API key，手工配置。
+- `LocalEmbeddingWorkerEmbeddingProvider`：调用 Python FastAPI worker，需手工启动。
 
-- `task` 表保存当前状态。
-- `task_event` 表保存历史过程。
-- 便于审计、排错、复盘。
-- 后续可以扩展成 Agent Trace / Execution Trace。
+`DocumentEmbeddingService` 负责 embed 文档 chunks，写入 `document_chunk_embedding` 并 upsert 到 VectorStore。search 时使用同一 provider/model 空间，避免混用不同 embedding space。
 
-## 十、重试机制怎么讲
+**边界**：Local Worker 是原型，不是 production deployment；默认 CI 不启动 Python worker。
 
-重试机制由 `retryCount`、`maxRetry`、`nextRetryAt`、`RETRY_PENDING` 和 `RetryScheduler` 组成。任务失败后，如果还可以重试，就进入 `RETRY_PENDING`，设置下一次重试时间。Scheduler 到期后重新投递 MQ，由 Consumer 再次执行。重试耗尽后进入 `FAILED`。
+---
 
-当前是本地单实例轻量实现，生产级还需要分布式锁、Outbox、DLQ、ack/nack 深度治理等增强。
+## 十、VectorStore 怎么讲
 
-## 十一、幂等怎么讲
+`VectorStore` 抽象 upsert / search / delete。两种实现：
 
-- Consumer 收到消息后先调用 `tryStartTaskExecution`。
-- 只有 `PENDING / RETRY_PENDING` 可以进入 `RUNNING`。
-- `RUNNING / SUCCESS / FAILED / CANCELLED` 收到重复消息会被忽略。
-- `DevTaskDispatchController` 用于本地模拟重复投递。
-- Scheduler 投递后推迟 `nextRetryAt`，降低短时间重复投递。
+- `ExactCosineVectorStore`（默认）：基于 DB 中 embedding 做 exact cosine，适合 baseline 与本地开发。
+- `QdrantVectorStore`（实验性）：REST 接入 Qdrant，需手工启动 Qdrant 并配置 `app.vector-store.provider=qdrant`。
 
-当前边界：
+`DocumentEmbeddingService.search()` 委托 VectorStore，不再内联 cosine 计算。
 
-- 还没有数据库乐观锁 version。
-- 还没有 Redis 分布式锁。
-- 还没有 Outbox。
-- 还没有 RabbitMQ ack/nack 深度治理。
+**VectorStore Benchmark Harness**（测试 only）：`VectorStoreBenchmarkRunner` 对比 baseline vs candidate 的 Recall@K、延迟等，通过 `VectorStoreBenchmarkComparisonTest` 验证。
 
-## 十二、取消和超时怎么讲
+**边界**：不要声称 Qdrant 已 production-ready；不要声称 Qdrant 提升了 Recall@K（除非有真实 benchmark 数据）。
 
-- `PENDING / RETRY_PENDING` 可以直接取消。
-- `RUNNING` 使用协作式取消。
-- 执行过程中定期检查任务是否 `CANCELLED`。
-- `timeoutSeconds / timeoutAt` 表示任务超时时间。
-- `TimeoutScheduler` 扫描 `RUNNING` 且 `timeoutAt` 到期的任务。
-- 超时后标记 `FAILED`。
-- `TaskExecutionService` 避免覆盖已经 `CANCELLED / FAILED` 的终态。
+---
 
-## 十三、LLM Client / MockLlmClient 怎么讲
+## 十一、Retrieval Evaluation 怎么讲
 
-`LlmClient` 是统一模型调用接口，`MockLlmClient` 是当前的模拟实现，不调用外部 API。TaskExecutionService 只依赖 `LlmClient`，因此后续可以替换为真实 OpenAI / Claude / 本地模型 Provider。
+`POST /evaluations/retrieval` 接受 documentId、topKValues、cases（含 expectedChunkIds）。
 
-MockLlmClient 当前支持：
+`RetrievalMetricsCalculator` 计算 Recall@K、Precision@K、HitRate@K、MRR、NDCG@K、ContextPrecision@K。
 
-- 成功返回 content。
-- prompt 包含 `fail` 或 `失败` 时返回失败。
-- 返回 provider、model、token usage、latency。
+Benchmark seed（`retrieval-corpus-v1.md` + `retrieval-benchmark-v1.json`）通过 `BenchmarkEvidenceMapper` 将 evidence marker 映射为 chunkId，主要用于测试 harness。
 
-## 十四、Prompt Template 怎么讲
+**边界**：Evaluation result 未持久化；Generation Evaluation（Faithfulness 等）尚未实现。
 
-Prompt Template 用来把用户输入和系统模板合成最终 LLM Prompt。
+---
 
-当前实现：
+## 十二、RAG Answer 怎么讲
 
-- `prompt_template` 表保存模板。
-- 默认模板为 `default_task_prompt`。
-- `PromptTemplateRenderer` 支持 `{{prompt}}`、`{{taskId}}`、`{{model}}`。
-- TaskExecutionService 使用 renderedPrompt 构造 LlmRequest。
-- task 表保存 `renderedPrompt` 和 `promptTemplateCode`。
+`POST /rag/answer`：检索 TopK chunks → `RagPromptBuilder` 构造 prompt → Mock LLM 生成 answer → 返回 citations。
 
-## 十五、Model Router 怎么讲
+链路已打通，但：
 
-创建任务时用户可以传入 `model`，系统保存为 `requestedModel`。执行阶段由 `ModelRouter` 选择实际执行模型，支持：
+- LLM 是 Mock，不是真实 OpenAI / Claude。
+- 未做 Generation Evaluation 或 citation faithfulness 验证。
+- 不应表述为“完整 production RAG”。
 
-- `mock-llm`
-- `mock-fast`
-- `mock-smart`
+---
 
-未知模型 fallback 到 `mock-llm`。最终任务详情中可以同时看到 `requestedModel` 和实际执行的 `llmModel`。
+## 十三、Local Embedding Worker 怎么讲
 
-当前还没有真实成本、延迟、负载、上下文长度路由。
+Python FastAPI + sentence-transformers，位于 `workers/embedding-worker/`。
 
-## 十六、LLM usage metadata 怎么讲
+Java 侧 `LocalEmbeddingWorkerEmbeddingProvider` 通过 HTTP 调用 `POST /embeddings`。
 
-MockLlmClient 返回：
+**诚实边界**：
 
-- `llmProvider`
-- `promptTokenCount`
-- `completionTokenCount`
-- `totalTokenCount`
-- `llmLatencyMs`
-
-这些字段保存到 task 表，用于后续真实 token usage 和成本统计打基础。
+- 需手工启动，未纳入 docker-compose。
+- 首次模型加载耗时不定。
+- 默认 `mvn test` 不依赖 worker。
+- 不要声称“生产可用”或“已大规模部署”。
 
-当前 token usage 是 Mock 估算，不是真实 tokenizer。
+---
 
-## 十七、Output chunks 怎么讲
+## 十四、当前项目边界
 
-当前项目实现的是持久化增量输出，不是 SSE / WebSocket。
+**已实现（可诚实表述）**
 
-流程：
+- Transactional Outbox、Atomic Claim、Task Attempt
+- Mock LLM、Prompt Template、Model Router、output chunks
+- Document Upload、Fixed / Adaptive Chunking
+- EmbeddingProvider 抽象（mock / openai / local-worker）
+- VectorStore 抽象（exact / qdrant）
+- Document Search、Retrieval Evaluation、RAG Answer（Mock LLM）
+- Benchmark harness（测试验证）
 
-```text
-Mock LLM 返回完整 content
--> TaskExecutionService 拆分 content
--> 保存 task_output_chunk
--> GET /tasks/{taskId}/output-chunks 查询 chunks
--> resultContent 仍保存完整输出
-```
+**原型 / 实验性（需加限定词）**
 
-这为后续 polling、SSE、WebSocket 实时输出打基础。
+- Local Embedding Worker、QdrantVectorStore、OpenAI embedding 手工配置
+- RAG Answer（Mock LLM）
 
-## 十八、Document Upload & Chunking 怎么讲
+**尚未实现（不要声称已有）**
 
-当前项目新增了 RAG 前置文档处理能力：
+- Rerank、Hybrid Search / BM25
+- Production-grade RAG generation / Generation Evaluation
+- Auth / tenant / quota、API rate limit
+- Agent Runtime、KV Cache-aware scheduling
+- Production observability dashboard
+- Distributed worker registry
+- Real billing / subscription
 
-- 支持上传 `.txt / .md`。
-- 保存文档元信息到 `document` 表。
-- UTF-8 读取文本。
-- 按固定长度切分。
-- 保存到 `document_chunk` 表。
-- 提供文档详情和 chunks 查询接口。
+---
 
-当前不做 PDF / Word / OCR，不做 Embedding、Vector DB、Semantic Search 或 RAG Answer。
+## 十五、如何诚实回答“这是 AI 项目吗？”
 
-## 十九、当前项目边界
+这是一个 **AI 任务编排与 RAG 检索后端原型**，不是完整 Agent 平台。
 
-当前已实现的是 AI 任务平台的可靠任务编排底座，以及 RAG 前置文档处理能力。
+它先解决可靠异步任务执行（Outbox、Claim、Attempt），再在同一底座上扩展 chunking、embedding、vector search、retrieval evaluation 和基础 RAG 问答。
 
-当前尚未实现：
+LLM 层当前是 Mock；Embedding 默认是 Mock；VectorStore 默认是 exact cosine。OpenAI、Local Worker、Qdrant 是可选实验路径。
 
-- 真实 OpenAI / Claude / 本地模型 Provider
-- API Key 配置
-- 真实 tokenizer
-- 真实成本统计
-- SSE / WebSocket
-- PDF / Word 解析
-- OCR
-- Embedding
-- Vector DB
-- Semantic Search
-- RAG Answer
-- Citation
-- Tool Calling
-- Agent Runtime
-- KV Cache-aware Scheduling
-- 多租户
-- 权限系统
-- 生产级监控
-- 分布式锁
-- Outbox Pattern
-- Dead Letter Queue
+价值在于：架构边界清晰、provider 可替换、评估 harness 可复现、测试与外部依赖隔离——为后续接入真实模型、Rerank、Hybrid Search、Agent Runtime 打基础。
 
-## 二十、如何诚实回答“这是 AI 项目吗？”
+---
 
-这个项目当前还不是完整的 LLM 应用或 Agent 平台，也没有接入真实 OpenAI / Claude / 本地模型。它先实现 AI 任务平台底层最重要的任务编排能力，并用 MockLlmClient 模拟模型调用。因为真实 AI 任务通常具有长耗时、易失败、需要重试、需要状态追踪、需要取消和超时控制等特点，所以我先从可靠任务系统做起。后续接入 LLM、Embedding、RAG、Tool Calling、Agent Runtime 时，可以复用这套异步调度、状态管理、Prompt 追踪、输出追踪和文档处理底座。
+## 十六、后续扩展路线（面试可提，非已实现）
 
-## 二十一、后续扩展路线
+1. E2E Demo Golden Path
+2. Atomic Finalization
+3. Qdrant Manual Verification（文档化 + 可选 compose）
+4. API Error Response Standardization
+5. Local Embedding Worker Packaging
+6. Retrieval Policy & VIP Search
+7. Rerank
+8. Hybrid Search
+9. RAG Answer with Citation（真实 LLM + Generation Evaluation）
+10. Generation Evaluation
+11. Agent Runtime
+12. KV Cache-aware Scheduling
 
-下一阶段可以扩展：
+不要把已完成的 VectorStore、QdrantVectorStore、Retrieval Evaluation 继续说成“下一步要做”。
 
-- Prompt Template CRUD API
-- 真实模型 Provider
-- API Key 管理
-- 真实 tokenizer
-- 成本统计
-- SSE / WebSocket
-- PDF / Word 解析
-- Embedding
-- Vector DB
-- Semantic Search
-- RAG Answer
-- Citation
-- Tool Calling
-- Agent Runtime
-- Evaluation Harness
-- KV Cache-aware Scheduling
+---
 
-## 二十二、面试可能被问的问题
+## 十七、面试常见问题
 
-1. 为什么不用线程直接执行？
-   HTTP 请求不应该阻塞长耗时任务，MQ 可以解耦创建和执行。
+1. **为什么用 Transactional Outbox？**  
+   保证任务入库与 MQ 投递原子性，避免消息丢失或重复发送不一致。
 
-2. 为什么要引入 RabbitMQ？
-   支持异步消费、削峰、后续多 Worker 扩展。
+2. **Atomic Claim 和幂等有什么关系？**  
+   Claim 只允许合法状态进入 RUNNING，重复 MQ 消息不会重复执行。
 
-3. 状态机解决了什么问题？
-   防止非法流转，让生命周期可控。
+3. **EmbeddingProvider 和 VectorStore 为什么分开？**  
+   Embedding 是“文本 → 向量”，VectorStore 是“向量存储与检索”，解耦后可独立替换 provider 或存储后端。
 
-4. task_event 有什么价值？
-   保存历史过程，便于审计和排错。
+4. **ExactCosine 和 Qdrant 怎么选？**  
+   Exact 适合 baseline 与小规模本地验证；Qdrant 适合实验性 ANN 检索，需手工部署，默认测试用 fake client。
 
-5. 重试机制如何避免无限重试？
-   使用 `retryCount` 和 `maxRetry` 控制上限。
+5. **Retrieval Evaluation 的 expectedChunkIds 从哪来？**  
+   手工指定或 benchmark seed + Evidence Mapper 映射；mapper 主要用于测试 harness。
 
-6. 幂等怎么保证？
-   Consumer 入口只允许 `PENDING / RETRY_PENDING` 进入 `RUNNING`。
+6. **RAG Answer 算完成了吗？**  
+   链路打通，但 LLM 是 Mock，未做 generation quality 评估，不是 production RAG。
 
-7. 取消 RUNNING 任务为什么不能直接 kill 线程？
-   直接中断风险高，当前使用协作式取消更可控。
+7. **如果要生产化还缺什么？**  
+   Auth、多租户、监控、Rerank、Hybrid Search、真实 LLM governance、Worker 编排、Qdrant 运维等。
 
-8. 超时后如何避免执行线程覆盖状态？
-   写成功或失败前再次检查任务是否仍是 `RUNNING`。
+---
 
-9. Model Router 当前有什么边界？
-   只支持 Mock 模型 fallback，还没有真实多 Provider 策略。
-
-10. Document chunking 和 RAG 有什么关系？
-    chunking 是 RAG 的前置步骤，后续还需要 Embedding、向量库和检索。
-
-11. 如果要生产化，还缺什么？
-    权限、多租户、监控、分布式锁、Outbox、DLQ、真实 Provider、安全配置等。
-
-## 二十三、相关文档
+## 十八、相关文档
 
 - [README.md](../README.md)
 - [docs/local-dev.md](local-dev.md)
 - [docs/project-structure.md](project-structure.md)
 - [docs/api-examples.md](api-examples.md)
-
+- [docs/interview/](../interview/)（版本演进详细文档）

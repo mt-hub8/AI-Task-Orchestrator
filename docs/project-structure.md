@@ -2,411 +2,419 @@
 
 ## 一、文档目的
 
-本文档用于帮助开发者理解 AI Task Orchestrator 的项目结构、核心类职责、任务执行链路、文档上传与 chunking 链路，以及当前架构边界。
+本文档帮助开发者理解 AI Task Orchestrator 的模块划分、核心类职责、任务执行链路、RAG / Embedding / VectorStore 链路，以及当前架构边界。
+
+---
 
 ## 二、整体目录结构
 
 ```text
 src/main/java/com/tuoman/ai_task_orchestrator
-├── config
-├── controller
-├── dto
-├── entity
-├── enums
-├── llm
-├── mq
-├── prompt
-├── repository
-├── scheduler
-├── service
-├── state
+├── config              # RabbitMQ 等基础设施配置
+├── controller          # HTTP API 入口
+├── document            # 文档 chunking 策略
+├── dto                 # 请求 / 响应对象
+├── embedding           # EmbeddingProvider 抽象与实现
+├── entity              # JPA 实体
+├── enums               # 状态与类型枚举
+├── evaluation          # Benchmark / Evidence Mapper（测试 harness 为主）
+├── llm                 # LLM Client / ModelRouter
+├── mq                  # RabbitMQ 生产 / 消费
+├── prompt              # Prompt Template 渲染
+├── repository          # 数据访问
+├── scheduler           # 重试 / 超时 / Outbox 调度
+├── service             # 核心业务逻辑
+├── state               # 任务状态机
+├── vectorstore         # VectorStore 抽象与实现
+│   └── qdrant          # Qdrant REST 客户端与 DTO
 └── AiTaskOrchestratorApplication.java
 
 src/main/resources
 ├── application.properties
 ├── application-docker.properties
-└── db/migration
+└── db/migration        # Flyway 迁移脚本
 
-docs
-├── local-dev.md
-├── api-examples.md
-├── project-structure.md
-└── resume-interview.md
+workers/embedding-worker   # Python FastAPI 本地 embedding worker（实验性）
+docs/                      # 项目文档
+docs/interview/            # 版本演进面试文档（只读索引，本版本不修改）
 ```
+
+---
 
 ## 三、controller 包
 
-Controller 层负责接收 HTTP 请求。
+Controller 层负责接收 HTTP 请求，不包含业务逻辑。
 
-`TaskController`：
+| Controller | 路径 | 职责 |
+| --- | --- | --- |
+| `TaskController` | `/tasks` | 创建 / 查询 / 取消任务；查询 output chunks 与 attempts |
+| `DevTaskDispatchController` | `/dev/tasks` | 本地重复投递 MQ（非生产） |
+| `DevTaskController` | `/dev/tasks` | dev profile 下修改任务状态（调试） |
+| `DocumentController` | `/documents` | 上传、查询、chunk、embedding、search |
+| `RetrievalEvaluationController` | `/evaluations` | 检索评估 API |
+| `RagAnswerController` | `/rag` | RAG 问答 API（Mock LLM） |
 
-- `POST /tasks`
-- `GET /tasks/{taskId}`
-- `PATCH /tasks/{taskId}/status`
-- `POST /tasks/{taskId}/cancel`
-- `GET /tasks/{taskId}/output-chunks`
+真实 API 路径：
 
-`DevTaskDispatchController`：
-
+- `POST /tasks`、`GET /tasks/{taskId}`、`POST /tasks/{taskId}/cancel`
+- `GET /tasks/{taskId}/output-chunks`、`GET /tasks/{taskId}/attempts`
 - `POST /dev/tasks/{taskId}/dispatch`
-- 仅用于本地开发测试重复投递，不是生产接口。
+- `PATCH /dev/tasks/{taskId}/status`（需 `dev` profile）
+- `POST /documents`、`GET /documents/{documentId}`、`GET /documents/{documentId}/chunks`
+- `POST /documents/{documentId}/embeddings`、`POST /documents/search`
+- `POST /evaluations/retrieval`
+- `POST /rag/answer`
 
-`DocumentController`：
+---
 
-- `POST /documents`
-- `GET /documents/{documentId}`
-- `GET /documents/{documentId}/chunks`
+## 四、task 模块
 
-## 四、dto 包
+**职责**：任务生命周期管理、状态流转、事件追踪。
 
-DTO 用于接口入参和出参，隔离 Entity 和 HTTP API。
+核心类：
 
-任务相关：
+- `TaskController` / `TaskService`：创建任务、查询详情、取消、状态变更
+- `TaskEntity` / `TaskRepository`：任务持久化
+- `TaskEventEntity` / `TaskEventRepository`：历史事件（`TASK_CREATED`、`STATUS_CHANGED`）
+- `TaskStateMachine`：限制合法状态流转（`PENDING` → `RUNNING` → `SUCCESS` 等）
+- `TaskExecutionService`：Consumer 执行入口，调用 LLM、保存结果
+- `TaskOutputChunkService`：将 LLM 输出拆分为 chunks 并持久化
 
-- `CreateTaskRequest`
-- `CreateTaskResponse`
-- `TaskDetailResponse`
-- `UpdateTaskStatusRequest`
-- `DevTaskDispatchResponse`
-- `TaskOutputChunkResponse`
+执行链路：
 
-文档相关：
+```text
+POST /tasks
+-> TaskService 创建 PENDING 任务 + 写 task_event
+-> TaskOutboxService 写入 outbox
+-> Outbox Dispatcher 投递 RabbitMQ
+-> Consumer -> Atomic Claim -> TaskExecutionService
+-> ModelRouter / PromptTemplate / LlmClient
+-> 更新 task_attempt、task_output_chunk、task 状态
+```
 
-- `DocumentUploadResponse`
-- `DocumentDetailResponse`
-- `DocumentChunkResponse`
+---
 
-LLM 相关对象在 `llm` 包中：
+## 五、outbox 模块
 
-- `LlmRequest`
-- `LlmResponse`
+**职责**：Transactional Outbox，保证任务创建与 MQ 投递的一致性。
 
-## 五、entity 包
+核心类：
 
-Entity 映射数据库表。
+- `TaskOutboxEntity` / `TaskOutboxRepository`：outbox 记录
+- `TaskOutboxService`：创建任务时同事务写入 outbox
+- `TaskOutboxDispatcherScheduler`：扫描 pending outbox 并投递 MQ
 
-`TaskEntity`：
+与直接 `Producer.send` 的区别：outbox 在同一数据库事务内写入，Scheduler 异步投递，避免“DB 已提交但 MQ 未发送”的不一致。
 
-- 对应 `task` 表。
-- 保存任务当前状态、prompt、requestedModel、错误信息、重试字段、超时字段、LLM 结果、Prompt 渲染信息和 LLM usage metadata。
+---
 
-`TaskEventEntity`：
+## 六、attempt 模块
 
-- 对应 `task_event` 表。
-- 保存任务历史事件和状态变化。
+**职责**：记录每次任务执行尝试（provider、model、status、token、latency）。
 
-`TaskOutputChunkEntity`：
+核心类：
 
-- 对应 `task_output_chunk` 表。
-- 保存任务输出片段。
+- `TaskAttemptEntity` / `TaskAttemptRepository`
+- `TaskAttemptService`：创建 attempt、更新执行结果
+- `GET /tasks/{taskId}/attempts`：查询历史尝试
 
-`PromptTemplateEntity`：
+与 task 表的关系：`task` 保存当前聚合状态；`task_attempt` 保存每次执行明细，便于重试审计与 LLM 调用追踪。
 
-- 对应 `prompt_template` 表。
-- 保存 Prompt Template 定义。
+---
 
-`DocumentEntity`：
+## 七、llm / prompt / model router
 
-- 对应 `document` 表。
-- 保存文档元信息、状态、chunk 数量和错误信息。
+**llm 包**
 
-`DocumentChunkEntity`：
+- `LlmClient`：统一 LLM 调用接口
+- `MockLlmClient`：当前默认实现，不调用外部 API
+- `LlmRequest` / `LlmResponse`：请求与响应对象
+- `ModelRouter`：根据 `requestedModel` 选择实际执行模型（`mock-llm` / `mock-fast` / `mock-smart`）
 
-- 对应 `document_chunk` 表。
-- 保存文档切分后的文本片段。
+**prompt 包**
 
-## 六、enums 包
+- `PromptTemplateRenderer`：渲染 `{{prompt}}`、`{{taskId}}`、`{{model}}`
+- `PromptTemplateEntity`：数据库模板定义，默认 `default_task_prompt`
 
-枚举用于表达有限状态和事件类型。
+TaskExecutionService 在每次执行时渲染 prompt、调用 LlmClient、保存 LLM usage metadata 到 task 与 task_attempt。
 
-`TaskStatus`：
+---
 
-- `PENDING`
-- `RUNNING`
-- `RETRY_PENDING`
-- `SUCCESS`
-- `FAILED`
-- `CANCELLED`
+## 八、output chunk 模块
 
-`TaskEventType`：
+**职责**：持久化 LLM 输出片段，供后续 polling 或 streaming 扩展。
 
-- `TASK_CREATED`
-- `STATUS_CHANGED`
-
-`DocumentStatus`：
-
-- `UPLOADED`
-- `CHUNKED`
-- `FAILED`
-
-## 七、state 包
-
-`TaskStateMachine` 负责限制任务状态合法流转。
-
-主要合法流转：
-
-- `PENDING -> RUNNING`
-- `PENDING -> CANCELLED`
-- `RUNNING -> SUCCESS`
-- `RUNNING -> RETRY_PENDING`
-- `RUNNING -> FAILED`
-- `RUNNING -> CANCELLED`
-- `RETRY_PENDING -> RUNNING`
-- `RETRY_PENDING -> FAILED`
-- `RETRY_PENDING -> CANCELLED`
-
-状态机用于防止非法流转，例如 `SUCCESS -> RUNNING`、`FAILED -> RUNNING`。
-
-## 八、repository 包
-
-Repository 负责数据库访问。
-
-- `TaskRepository`：查询任务、到期重试任务、超时 RUNNING 任务。
-- `TaskEventRepository`：保存任务事件。
-- `TaskOutputChunkRepository`：查询任务输出 chunks。
-- `PromptTemplateRepository`：按 templateCode 查询启用模板。
-- `DocumentRepository`：文档元信息访问。
-- `DocumentChunkRepository`：按 documentId 查询文档 chunks。
-
-## 九、mq 包
-
-MQ 层负责 RabbitMQ 消息投递和消费。
-
-- `RabbitMQConfig`：定义 exchange / queue / binding / message converter。
-- `TaskDispatchMessage`：MQ 消息体。
-- `TaskDispatchProducer`：发送任务调度消息。
-- `TaskDispatchConsumer`：接收任务调度消息并调用 `TaskExecutionService`。
-
-## 十、service 包
-
-Service 层承载核心业务逻辑。
-
-`TaskService`：
-
-- 创建任务
-- 查询任务
-- 状态流转
-- 记录 `task_event`
-- 标记失败
-- 标记重试等待
-- 尝试开始执行 `tryStartTaskExecution`
-- 取消任务
-- 判断取消/运行状态
-- 标记超时
-- 保存 LLM metadata
-- 保存成功结果
-
-`TaskExecutionService`：
-
-- Consumer 收到消息后的任务执行入口。
-- 做入口幂等保护。
-- 模拟执行延迟并检查取消。
-- 使用 `ModelRouter` 选择模型。
-- 查询 Prompt Template。
-- 渲染 `renderedPrompt`。
-- 调用 `LlmClient`。
-- 保存 LLM metadata。
-- 成功后保存 output chunks 和完整 resultContent。
-- 失败后进入重试或最终失败。
-- 避免覆盖已取消或已超时任务。
-
-`TaskOutputChunkService`：
-
-- 将完整输出拆成固定长度 chunks。
-- 保存 `task_output_chunk`。
-- 查询任务输出 chunks。
-
-`DocumentService`：
-
-- 校验上传文件。
-- 读取 `.txt` / `.md` UTF-8 文本。
-- 按固定长度切分文档内容。
-- 保存 `document` 和 `document_chunk`。
-- 查询文档详情。
-- 查询文档 chunks。
-
-## 十一、scheduler 包
-
-Scheduler 负责后台定时扫描。
-
-`TaskRetryScheduler`：
-
-- 扫描 `RETRY_PENDING` 且 `nextRetryAt` 到期的任务。
-- 重新投递 MQ。
-- 推迟 `nextRetryAt`，避免短时间重复投递。
-
-`TaskTimeoutScheduler`：
-
-- 扫描 `RUNNING` 且 `timeoutAt` 到期的任务。
-- 标记为 `FAILED`。
-- `errorMessage = 任务执行超时`。
-
-## 十二、llm 包
-
-`llm` 包负责 LLM 调用抽象、Mock Provider 和模型路由。
-
-- `LlmClient`：统一 LLM 调用接口。
-- `LlmRequest`：LLM 请求对象，包含 taskId、prompt、model。
-- `LlmResponse`：LLM 响应对象，包含 taskId、model、content、success、errorMessage、provider、token usage、latency。
-- `MockLlmClient`：模拟 LLM Provider，不调用外部 API。
-- `ModelRouter`：根据 requestedModel 选择实际执行模型。
-
-当前 `ModelRouter` 支持：
-
-- `mock-llm`
-- `mock-fast`
-- `mock-smart`
-
-未知模型 fallback 到 `mock-llm`。
-
-## 十三、prompt 包
-
-`prompt` 包负责 Prompt Template 渲染。
-
-`PromptTemplateRenderer`：
-
-- 支持 `{{prompt}}`
-- 支持 `{{ taskId }}`
-- 支持 `{{model}}`
-- 缺失变量时抛出异常
-
-当前默认模板为 `default_task_prompt`。
-
-## 十四、document 相关结构
-
-Document Upload & Chunking 涉及：
-
-- `DocumentController`
-- `DocumentService`
-- `DocumentEntity`
-- `DocumentChunkEntity`
-- `DocumentRepository`
-- `DocumentChunkRepository`
-- `DocumentStatus`
-- `DocumentUploadResponse`
-- `DocumentDetailResponse`
-- `DocumentChunkResponse`
-
-当前只支持 `.txt` / `.md` 文本文件，不保存原始文件到磁盘。
-
-## 十五、task_output_chunk 相关结构
-
-持久化增量输出涉及：
-
-- `TaskOutputChunkEntity`
-- `TaskOutputChunkRepository`
-- `TaskOutputChunkService`
-- `TaskOutputChunkResponse`
+- `TaskOutputChunkEntity` / `TaskOutputChunkRepository`
+- `TaskOutputChunkService`：拆分并保存 chunks
 - `GET /tasks/{taskId}/output-chunks`
 
-当前不是 SSE / WebSocket，只是异步任务系统下的持久化输出片段查询。
+当前不是 SSE / WebSocket，只是异步任务下的持久化片段查询。
 
-## 十六、resources/db/migration
+---
 
-Flyway 迁移脚本管理数据库结构。
+## 九、document / chunking 模块
 
-- `V1__create_task_table.sql`
-- `V2__create_task_event_table.sql`
-- `V3__add_error_message_to_task.sql`
-- `V4__add_retry_fields_to_task.sql`
-- `V5__add_timeout_fields_to_task.sql`
-- `V6__add_llm_result_fields_to_task.sql`
-- `V7__create_prompt_template_table.sql`
-- `V8__add_prompt_render_fields_to_task.sql`
-- `V9__add_llm_usage_fields_to_task.sql`
-- `V10__add_requested_model_to_task.sql`
-- `V11__create_task_output_chunk_table.sql`
-- `V12__create_document_tables.sql`
+**职责**：文档上传、文本读取、chunk 切分与 metadata 保存。
 
-## 十七、一次任务完整执行链路
+**document 包**
 
-```text
-1. 用户调用 POST /tasks
-2. TaskController 接收请求
-3. TaskService 创建 task，状态 PENDING
-4. TaskService 写入 TASK_CREATED 事件
-5. TaskDispatchProducer 发送 RabbitMQ 消息
-6. TaskDispatchConsumer 收到消息
-7. TaskExecutionService 调用 tryStartTaskExecution
-8. PENDING / RETRY_PENDING -> RUNNING
-9. ModelRouter 选择实际模型
-10. 查询 default_task_prompt
-11. PromptTemplateRenderer 渲染 renderedPrompt
-12. LlmClient.generate 调用 MockLlmClient
-13. 保存 LLM metadata
-14. 成功：保存 output chunks
-15. 成功：RUNNING -> SUCCESS
-16. 失败可重试：RUNNING -> RETRY_PENDING
-17. RetryScheduler 到期重新投递
-18. 重试耗尽：RUNNING -> FAILED
-19. 用户取消：进入 CANCELLED
-20. TimeoutScheduler 超时：RUNNING -> FAILED
+- `DocumentChunker`：Fixed / Adaptive 两种切分策略
+- `DocumentChunkResult`：切分结果对象
+
+**service 层**
+
+- `DocumentService`：校验 `.txt` / `.md`、UTF-8 读取、调用 chunker、保存 `document` / `document_chunk`
+
+Chunk metadata 包括：`chunkIndex`、`content`、`headingPath`、`chunkStrategy`、`startOffset`、`endOffset`。
+
+Adaptive Chunking 按 Markdown 标题结构切分；Fixed Chunking 按固定长度切分。对比通过 `ChunkingStrategyComparisonTest` 验证，无独立 HTTP API。
+
+---
+
+## 十、embedding 模块
+
+**职责**：文本向量化抽象，支持多种 provider 切换。
+
+**embedding 包**
+
+| 类 | 职责 |
+| --- | --- |
+| `EmbeddingProvider` | 统一 embedding 接口 |
+| `MockEmbeddingProvider` | 默认 provider，确定性 mock 向量 |
+| `OpenAiCompatibleEmbeddingProvider` | OpenAI-compatible HTTP embedding |
+| `LocalEmbeddingWorkerEmbeddingProvider` | 调用 Python worker |
+| `EmbeddingProviderConfiguration` | 按 `app.embedding.provider` 装配 bean |
+| `RestClientOpenAiEmbeddingHttpClient` | OpenAI HTTP 客户端 |
+| `RestClientLocalEmbeddingWorkerClient` | Local worker HTTP 客户端 |
+
+**service 层**
+
+- `DocumentEmbeddingService`：为文档所有 chunk 生成 embedding，写入 `document_chunk_embedding` 与 VectorStore
+
+配置项：
+
+```properties
+app.embedding.provider=mock|openai|local-worker
+app.embedding.local-worker.base-url=http://127.0.0.1:8001
 ```
 
-## 十八、文档上传与 chunking 链路
+---
 
-```text
-1. 用户调用 POST /documents
-2. DocumentController 接收 multipart file
-3. DocumentService 校验文件名
-4. 只允许 .txt / .md
-5. 保存 document，状态 UPLOADED
-6. UTF-8 读取文本
-7. 按 500 字符切分
-8. 保存 document_chunk
-9. 更新 document 状态 CHUNKED
-10. 返回 documentId / status / chunkCount
+## 十一、vectorstore 模块
+
+**职责**：向量存储与检索抽象，与 embedding 持久化解耦。
+
+**vectorstore 包**
+
+| 类 | 职责 |
+| --- | --- |
+| `VectorStore` | upsert / search / delete 接口 |
+| `ExactCosineVectorStore` | 默认 baseline，基于 DB embedding 做 exact cosine |
+| `VectorStoreConfiguration` | 按 `app.vector-store.provider` 装配 |
+| `VectorSearchRequest` / `VectorSearchResult` | 检索请求与结果 |
+| `VectorStoreProperties` | 配置属性 |
+
+**vectorstore.qdrant 包**（实验性）
+
+| 类 | 职责 |
+| --- | --- |
+| `QdrantVectorStore` | Qdrant 实现 |
+| `RestClientQdrantVectorStoreClient` | Qdrant REST API 客户端 |
+| `QdrantPayloadMapper` | chunk metadata ↔ Qdrant payload 映射 |
+| DTO 类 | search / upsert / filter 请求响应 |
+
+`DocumentEmbeddingService.search()` 委托给 active `VectorStore`，不再内联 cosine 计算。
+
+配置项：
+
+```properties
+app.vector-store.provider=exact|qdrant
+app.vector-store.qdrant.base-url=http://127.0.0.1:6333
+app.vector-store.qdrant.initialize-collection=false
 ```
 
-处理失败时：
+---
+
+## 十二、retrieval evaluation 模块
+
+**职责**：对检索质量做离线评估，输出 Recall@K、Precision@K、MRR、NDCG@K 等指标。
+
+**service 层**
+
+- `RetrievalEvaluationService`：执行评估逻辑
+- `RetrievalMetricsCalculator`：计算各 @K 指标
+
+**controller**
+
+- `POST /evaluations/retrieval`
+
+**evaluation 包**（benchmark harness）
+
+- `BenchmarkEvidenceMapper`：将 benchmark seed 中的 `expectedEvidenceIds` 映射为真实 `expectedChunkIds`
+- `RetrievalBenchmarkDataset` / `RetrievalBenchmarkCase`：benchmark 数据集结构
+- `RetrievalBenchmarkResourceLoader`：加载 `src/test/resources/evaluation/` 资源
+
+Benchmark seed 资源：
+
+- `retrieval-corpus-v1.md`
+- `retrieval-benchmark-v1.json`
+
+Evidence Mapper 与 seed 加载主要用于测试 harness，未单独暴露 HTTP API。
+
+---
+
+## 十三、benchmark 模块
+
+**职责**：对比不同 provider / vectorstore / chunking 策略的效果与延迟。
+
+**evaluation 包**
+
+| 类 | 职责 |
+| --- | --- |
+| `VectorStoreBenchmarkRunner` | 对比 baseline vs candidate VectorStore |
+| `LatencyMeasuringVectorStore` | 包装 VectorStore 测量延迟 |
+| `VectorStoreMetricDelta` | 指标差异记录 |
+| `BenchmarkEvidenceMapper` | evidence → chunkId 映射 |
+
+测试入口（无生产 HTTP API）：
+
+- `VectorStoreBenchmarkComparisonTest`：exact vs fake candidate
+- `EmbeddingProviderBenchmarkComparisonTest`：embedding provider 对比
+- `BenchmarkRunnerEvidenceMapperTest`：evidence mapper 验证
+- `ChunkingStrategyComparisonTest`：fixed vs adaptive chunking
+
+---
+
+## 十四、RAG answer 模块
+
+**职责**：检索 + Mock LLM 生成带 citation 的回答。
+
+- `RagAnswerController`：`POST /rag/answer`
+- `RagAnswerService`：调用 `DocumentEmbeddingService.search()`，再调用 `LlmClient`
+- `RagPromptBuilder`：构造 RAG prompt
+
+链路已打通，但 LLM 仍为 Mock，属于基础原型，不是 production-grade generation。
+
+---
+
+## 十五、mq / scheduler 模块
+
+**mq 包**
+
+- `RabbitMQConfig`：exchange / queue / binding
+- `TaskDispatchProducer` / `TaskDispatchConsumer`：消息投递与消费
+
+**scheduler 包**
+
+- `TaskRetryScheduler`：扫描 `RETRY_PENDING` 到期任务，重新投递
+- `TaskTimeoutScheduler`：扫描 `RUNNING` 超时任务，标记 `FAILED`
+- `TaskOutboxDispatcherScheduler`：扫描 outbox 并投递 MQ
+
+---
+
+## 十六、workers 目录
+
+**职责**：Python FastAPI 本地 embedding worker（实验性，非默认测试依赖）。
 
 ```text
-document -> FAILED
-保存 errorMessage
-返回 500 Document processing failed
+workers/embedding-worker/
+├── main.py              # FastAPI app，POST /embeddings
+└── requirements.txt     # sentence-transformers 等依赖
 ```
 
-## 十九、当前架构边界
+Java 侧通过 `LocalEmbeddingWorkerEmbeddingProvider` + `RestClientLocalEmbeddingWorkerClient` 调用。需手工启动 worker 并配置 `app.embedding.provider=local-worker`。
 
-当前已实现：
+---
 
-- 任务生命周期
-- 异步调度
-- 状态机
-- 事件记录
-- 失败处理
-- 重试
-- 幂等
-- 取消
-- 超时
-- Prompt Template
-- Mock LLM
-- Model Router
-- LLM usage metadata
-- 持久化 output chunks
-- Document Upload & Chunking
-- 本地环境工程化
+## 十七、docs/interview 目录
 
-当前未实现：
+**职责**：按版本记录功能演进、设计决策与面试表达，供 README 索引引用。
 
-- 真实 OpenAI / Claude / 本地模型 Provider
-- 真实 streaming provider
-- SSE / WebSocket
-- PDF / Word 解析
-- OCR
-- Embedding
-- Vector DB
-- Semantic Search
-- RAG Answer
-- Citation
-- Tool Calling
-- Agent Runtime
-- KV Cache-aware Scheduling
+示例文档（本版本不修改）：
 
-## 二十、相关文档
+- V0.x：任务状态机、MQ、重试、幂等、取消超时
+- V1.x：LLM 抽象、Prompt Template、Model Router、output chunks
+- V2.1–V2.4：Document、Chunking、Retrieval Evaluation
+- V2.5–V2.6：Embedding Provider、Local Worker、VectorStore、Qdrant、Benchmark
+
+---
+
+## 十八、数据库迁移（Flyway）
+
+| 版本 | 内容 |
+| --- | --- |
+| V1–V11 | task、task_event、retry/timeout/LLM 字段、prompt_template、task_output_chunk |
+| V12 | document / document_chunk |
+| V13 | chunk metadata（headingPath、chunkStrategy 等） |
+| V14 | document_chunk_embedding |
+| V15 | task_outbox |
+| V16 | task_attempt |
+
+---
+
+## 十九、核心链路一：Reliable Async Task Execution
+
+```text
+1. POST /tasks
+2. TaskService 创建 task（PENDING）+ task_event + task_outbox（同事务）
+3. TaskOutboxDispatcherScheduler 扫描 outbox -> RabbitMQ
+4. TaskDispatchConsumer 收到消息
+5. Atomic Claim：PENDING/RETRY_PENDING -> RUNNING
+6. TaskAttemptService 创建 attempt
+7. ModelRouter -> PromptTemplateRenderer -> MockLlmClient
+8. 保存 LLM metadata、output chunks
+9. SUCCESS / RETRY_PENDING / FAILED / CANCELLED
+10. RetryScheduler / TimeoutScheduler 后台扫描
+```
+
+---
+
+## 二十、核心链路二：RAG Retrieval / VectorStore
+
+```text
+1. POST /documents（上传 .txt/.md）
+2. DocumentService -> DocumentChunker（fixed/adaptive）-> document_chunk
+3. POST /documents/{documentId}/embeddings
+4. EmbeddingProvider.embed -> document_chunk_embedding + VectorStore.upsert
+5. POST /documents/search
+6. EmbeddingProvider.embed(query) -> VectorStore.search -> TopK chunks
+7. POST /evaluations/retrieval（可选，传入 cases + expectedChunkIds）
+8. POST /rag/answer（可选，检索 + Mock LLM + citations）
+```
+
+---
+
+## 二十一、当前架构边界
+
+**已实现**
+
+- 可靠异步任务编排（outbox、atomic claim、attempt、retry、timeout）
+- Mock LLM / Prompt Template / Model Router
+- Document Upload / Fixed & Adaptive Chunking
+- EmbeddingProvider 抽象（mock / openai / local-worker）
+- VectorStore 抽象（exact / qdrant）
+- Document search、Retrieval Evaluation、RAG Answer（Mock LLM）
+- Benchmark harness（测试验证）
+
+**原型 / 实验性**
+
+- Local Embedding Worker、QdrantVectorStore、OpenAI embedding 手工配置
+- RAG Answer（Mock LLM，未做 Generation Evaluation）
+
+**尚未实现**
+
+- Rerank、Hybrid Search
+- Production-grade RAG generation
+- Auth / tenant / quota、API rate limit
+- Agent Runtime、KV Cache-aware scheduling
+- Production observability dashboard
+- Distributed worker registry
+
+---
+
+## 二十二、相关文档
 
 - [README.md](../README.md)
 - [docs/local-dev.md](local-dev.md)
 - [docs/api-examples.md](api-examples.md)
 - [docs/resume-interview.md](resume-interview.md)
-
