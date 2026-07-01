@@ -1,0 +1,52 @@
+### AI Task Orchestrator — 异步任务执行 Demo
+### 前置：Spring Boot 已启动（docker profile），MySQL + RabbitMQ 已运行
+### 使用 IntelliJ HTTP Client 或 VS Code REST Client 逐步执行
+
+@baseUrl = http://localhost:8080
+@taskId = 1
+
+### 创建任务（prompt 必填；model 可选：mock-llm / mock-fast / mock-smart）
+POST {{baseUrl}}/tasks
+Content-Type: application/json
+
+{
+  "prompt": "请用三句话总结 AI Task Orchestrator 的核心价值",
+  "model": "mock-llm"
+}
+
+> {%
+    if (response.status === 200) {
+        client.global.set("taskId", response.body.taskId);
+    }
+%}
+
+###
+
+### 查询任务详情（等待数秒直至 status 变为 SUCCESS）
+GET {{baseUrl}}/tasks/{{taskId}}
+
+###
+
+### 查询 task attempts（每次执行尝试的 provider、model、token、latency）
+GET {{baseUrl}}/tasks/{{taskId}}/attempts
+
+###
+
+### 查询 output chunks（Mock LLM 输出拆分后的持久化片段）
+GET {{baseUrl}}/tasks/{{taskId}}/output-chunks
+
+###
+
+### 【可选】创建会失败的任务（prompt 含 fail 或 失败，用于观察重试）
+# @name failTask
+POST {{baseUrl}}/tasks
+Content-Type: application/json
+
+{
+  "prompt": "please fail this task"
+}
+
+###
+
+### 【可选】取消任务
+# POST {{baseUrl}}/tasks/{{taskId}}/cancel

@@ -1,0 +1,103 @@
+### AI Task Orchestrator — RAG / Retrieval Demo
+### 默认使用 mock embedding + exact VectorStore，不依赖 Qdrant / OpenAI / Python worker
+### 推荐上传文件：src/test/resources/evaluation/retrieval-corpus-v1.md
+
+@baseUrl = http://localhost:8080
+@documentId = 1
+@chunkId1 = 1
+@chunkId2 = 2
+
+### 上传文档（multipart；参数名必须为 file；仅 .txt / .md）
+# IntelliJ：可将下方路径改为项目内文件引用
+# < ../../src/test/resources/evaluation/retrieval-corpus-v1.md
+POST {{baseUrl}}/documents
+Content-Type: multipart/form-data; boundary=----RagDemoBoundary
+
+------RagDemoBoundary
+Content-Disposition: form-data; name="file"; filename="retrieval-corpus-v1.md"
+Content-Type: text/markdown
+
+# Transactional Outbox
+
+[EVIDENCE:outbox-reason]
+createTask 不直接发送 RabbitMQ，而是在同一个数据库事务中写入 task、task_event 和 task_outbox。
+
+# Atomic Task Claim
+
+[EVIDENCE:atomic-claim-purpose]
+Consumer 收到 RabbitMQ 消息后，通过数据库原子 update 将 PENDING / RETRY_PENDING claim 为 RUNNING。
+
+# Retrieval Evaluation
+
+[EVIDENCE:retrieval-evaluation-purpose]
+Retrieval Evaluation 用 query 和 expected evidence 对比 TopK 检索结果，计算 Recall@K、MRR、NDCG@K 等指标。
+------RagDemoBoundary--
+
+> {%
+    if (response.status === 200) {
+        client.global.set("documentId", response.body.documentId);
+    }
+%}
+
+###
+
+### 查询文档元信息（status、chunkCount）
+GET {{baseUrl}}/documents/{{documentId}}
+
+###
+
+### 查询文档 chunks（记录 chunkId，供 Retrieval Evaluation 使用）
+GET {{baseUrl}}/documents/{{documentId}}/chunks
+
+###
+
+### 为文档所有 chunk 生成 embedding（默认 mock provider）
+POST {{baseUrl}}/documents/{{documentId}}/embeddings
+
+###
+
+### 文档语义检索 TopK（query、topK 必填；documentId 可选限定单文档）
+POST {{baseUrl}}/documents/search
+Content-Type: application/json
+
+{
+  "query": "为什么 createTask 不直接发送 RabbitMQ",
+  "topK": 5,
+  "documentId": {{documentId}}
+}
+
+###
+
+### Retrieval Evaluation（expectedChunkIds 须替换为上一步 chunks 接口返回的真实 chunkId）
+POST {{baseUrl}}/evaluations/retrieval
+Content-Type: application/json
+
+{
+  "documentId": {{documentId}},
+  "topKValues": [1, 3, 5],
+  "cases": [
+    {
+      "caseId": "outbox-demo-001",
+      "query": "为什么 createTask 不直接发送 RabbitMQ",
+      "expectedChunkIds": [{{chunkId1}}]
+    },
+    {
+      "caseId": "atomic-claim-demo-001",
+      "query": "Consumer 如何避免重复执行同一个任务",
+      "expectedChunkIds": [{{chunkId2}}]
+    }
+  ]
+}
+
+###
+
+### 【可选】RAG Answer（检索 + Mock LLM + citation；非默认 demo 必做）
+# POST {{baseUrl}}/rag/answer
+# Content-Type: application/json
+#
+# {
+#   "query": "Transactional Outbox 解决什么问题？",
+#   "documentId": {{documentId}},
+#   "topK": 5,
+#   "requestedModel": "mock-llm"
+# }

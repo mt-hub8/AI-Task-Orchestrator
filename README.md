@@ -210,6 +210,8 @@ PowerShell 不要使用 `cd /d E:\code\ai-task-orchestrator`。
 
 ## 7. 可运行 Demo 入口
 
+完整 E2E 演示见：[docs/demo/e2e-demo.md](docs/demo/e2e-demo.md)（配合 `docs/demo/task-flow.http` 与 `docs/demo/rag-flow.http`）。
+
 | 能力 | HTTP 入口 |
 | --- | --- |
 | 创建任务 | `POST /tasks` |
