@@ -9,7 +9,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Component
-public class MockEmbeddingClient implements EmbeddingClient {
+public class MockEmbeddingClient implements EmbeddingClient, EmbeddingProvider {
 
     public static final String PROVIDER = "mock";
 
@@ -30,6 +30,21 @@ public class MockEmbeddingClient implements EmbeddingClient {
 
         List<Double> vector = buildVector(text);
         return new EmbeddingResponse(PROVIDER, model, DIMENSION, DISTANCE_METRIC, vector);
+    }
+
+    @Override
+    public String provider() {
+        return PROVIDER;
+    }
+
+    @Override
+    public String model() {
+        return DEFAULT_MODEL;
+    }
+
+    @Override
+    public int dimension() {
+        return DIMENSION;
     }
 
     private List<Double> buildVector(String text) {

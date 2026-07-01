@@ -3,11 +3,10 @@ package com.tuoman.ai_task_orchestrator.service;
 import com.tuoman.ai_task_orchestrator.dto.DocumentEmbeddingResponse;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchRequest;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchResultResponse;
-import com.tuoman.ai_task_orchestrator.embedding.EmbeddingClient;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingRequest;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingResponse;
+import com.tuoman.ai_task_orchestrator.embedding.EmbeddingProvider;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingVectorUtils;
-import com.tuoman.ai_task_orchestrator.embedding.MockEmbeddingClient;
 import com.tuoman.ai_task_orchestrator.entity.DocumentChunkEmbeddingEntity;
 import com.tuoman.ai_task_orchestrator.entity.DocumentChunkEntity;
 import com.tuoman.ai_task_orchestrator.repository.DocumentChunkEmbeddingRepository;
@@ -39,30 +38,30 @@ public class DocumentEmbeddingService {
 
     private final DocumentChunkEmbeddingRepository documentChunkEmbeddingRepository;
 
-    private final EmbeddingClient embeddingClient;
+    private final EmbeddingProvider embeddingProvider;
 
     @Transactional
     public DocumentEmbeddingResponse embedDocument(Long documentId) {
         ensureDocumentExists(documentId);
 
-        String embeddingProvider = MockEmbeddingClient.PROVIDER;
-        String embeddingModel = MockEmbeddingClient.DEFAULT_MODEL;
+        String embeddingProviderName = embeddingProvider.provider();
+        String embeddingModel = embeddingProvider.model();
 
         List<DocumentChunkEntity> chunks = documentChunkRepository.findByDocumentIdOrderByChunkIndexAsc(documentId);
         if (chunks.isEmpty()) {
             return new DocumentEmbeddingResponse(
                     documentId,
-                    embeddingProvider,
+                    embeddingProviderName,
                     embeddingModel,
-                    MockEmbeddingClient.DIMENSION,
-                    MockEmbeddingClient.DISTANCE_METRIC,
+                    embeddingProvider.dimension(),
+                    "COSINE",
                     0
             );
         }
 
         documentChunkEmbeddingRepository.deleteByDocumentIdAndEmbeddingProviderAndEmbeddingModel(
                 documentId,
-                embeddingProvider,
+                embeddingProviderName,
                 embeddingModel
         );
         documentChunkEmbeddingRepository.flush();
@@ -75,10 +74,10 @@ public class DocumentEmbeddingService {
 
         return new DocumentEmbeddingResponse(
                 documentId,
-                embeddingProvider,
+                embeddingProviderName,
                 embeddingModel,
-                MockEmbeddingClient.DIMENSION,
-                MockEmbeddingClient.DISTANCE_METRIC,
+                embeddingProvider.dimension(),
+                "COSINE",
                 embeddings.size()
         );
     }
@@ -90,7 +89,7 @@ public class DocumentEmbeddingService {
         }
 
         int topK = normalizeTopK(request.getTopK());
-        String embeddingProvider = normalizeProvider(request.getEmbeddingProvider());
+        String embeddingProviderName = normalizeProvider(request.getEmbeddingProvider());
         String embeddingModel = normalizeModel(request.getEmbeddingModel());
 
         if (request.getDocumentId() != null) {
@@ -100,13 +99,13 @@ public class DocumentEmbeddingService {
         EmbeddingRequest embeddingRequest = new EmbeddingRequest();
         embeddingRequest.setText(request.getQuery());
         embeddingRequest.setModel(embeddingModel);
-        EmbeddingResponse queryEmbedding = embeddingClient.embed(embeddingRequest);
+        EmbeddingResponse queryEmbedding = embeddingProvider.embed(embeddingRequest);
 
         List<DocumentChunkEmbeddingEntity> candidates = request.getDocumentId() == null
-                ? documentChunkEmbeddingRepository.findByEmbeddingProviderAndEmbeddingModel(embeddingProvider, embeddingModel)
+                ? documentChunkEmbeddingRepository.findByEmbeddingProviderAndEmbeddingModel(embeddingProviderName, embeddingModel)
                 : documentChunkEmbeddingRepository.findByDocumentIdAndEmbeddingProviderAndEmbeddingModel(
                         request.getDocumentId(),
-                        embeddingProvider,
+                        embeddingProviderName,
                         embeddingModel
                 );
 
@@ -121,6 +120,7 @@ public class DocumentEmbeddingService {
                 .collect(Collectors.toMap(DocumentChunkEntity::getId, Function.identity()));
 
         return candidates.stream()
+                .filter(embedding -> embedding.getVectorDimension().equals(queryEmbedding.getDimension()))
                 .map(embedding -> toScoredResult(embedding, chunksById.get(embedding.getDocumentChunkId()), queryEmbedding))
                 .filter(result -> result.chunk() != null)
                 .sorted(Comparator.comparingDouble(ScoredResult::score).reversed())
@@ -137,7 +137,7 @@ public class DocumentEmbeddingService {
         EmbeddingRequest request = new EmbeddingRequest();
         request.setText(chunk.getContent());
         request.setModel(embeddingModel);
-        EmbeddingResponse response = embeddingClient.embed(request);
+        EmbeddingResponse response = embeddingProvider.embed(request);
 
         DocumentChunkEmbeddingEntity entity = new DocumentChunkEmbeddingEntity();
         entity.setDocumentId(documentId);
@@ -195,13 +195,13 @@ public class DocumentEmbeddingService {
 
     private String normalizeProvider(String embeddingProvider) {
         return embeddingProvider == null || embeddingProvider.isBlank()
-                ? MockEmbeddingClient.PROVIDER
+                ? this.embeddingProvider.provider()
                 : embeddingProvider;
     }
 
     private String normalizeModel(String embeddingModel) {
         return embeddingModel == null || embeddingModel.isBlank()
-                ? MockEmbeddingClient.DEFAULT_MODEL
+                ? embeddingProvider.model()
                 : embeddingModel;
     }
 
