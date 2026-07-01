@@ -24,6 +24,8 @@ public class EmbeddingCacheService {
 
     private final EmbeddingProvider embeddingProvider;
 
+    private final EmbeddingCacheMetricsService embeddingCacheMetricsService;
+
     @Transactional
     public CachedEmbeddingResult getOrCompute(
             String chunkContent,
@@ -51,8 +53,11 @@ public class EmbeddingCacheService {
         Optional<EmbeddingCacheEntity> cached = embeddingCacheRepository
                 .findByChunkHashAndProviderAndModelAndDimension(chunkHash, provider, model, dimension);
         if (cached.isPresent()) {
+            embeddingCacheMetricsService.recordHit(provider, model, dimension);
             return toCachedResult(cached.get(), chunkHash, true);
         }
+
+        embeddingCacheMetricsService.recordMiss(provider, model, dimension);
 
         EmbeddingRequest request = new EmbeddingRequest();
         request.setText(chunkContent);
@@ -71,8 +76,10 @@ public class EmbeddingCacheService {
 
         try {
             EmbeddingCacheEntity saved = embeddingCacheRepository.saveAndFlush(entity);
+            embeddingCacheMetricsService.recordWrite(provider, model, dimension);
             return toCachedResult(saved, chunkHash, false, response.getDistanceMetric());
         } catch (DataIntegrityViolationException exception) {
+            embeddingCacheMetricsService.recordConflict(provider, model, dimension);
             return embeddingCacheRepository
                     .findByChunkHashAndProviderAndModelAndDimension(chunkHash, provider, model, dimension)
                     .map(existing -> toCachedResult(existing, chunkHash, true))

@@ -44,6 +44,9 @@ class EmbeddingCacheServiceTest {
     @Mock
     private EmbeddingProvider embeddingProvider;
 
+    @Mock
+    private EmbeddingCacheMetricsService embeddingCacheMetricsService;
+
     @InjectMocks
     private EmbeddingCacheService embeddingCacheService;
 
