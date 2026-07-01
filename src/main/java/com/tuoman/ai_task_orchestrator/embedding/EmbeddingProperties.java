@@ -13,6 +13,8 @@ public class EmbeddingProperties {
 
     private OpenAi openai = new OpenAi();
 
+    private LocalWorker localWorker = new LocalWorker();
+
     @Getter
     @Setter
     public static class OpenAi {
@@ -26,5 +28,18 @@ public class EmbeddingProperties {
         private int timeoutMs = 10000;
 
         private Integer dimension = 1536;
+    }
+
+    @Getter
+    @Setter
+    public static class LocalWorker {
+
+        private String baseUrl = "http://127.0.0.1:8001";
+
+        private String model = "sentence-transformers/all-MiniLM-L6-v2";
+
+        private Integer dimension = 384;
+
+        private int timeoutMs = 10000;
     }
 }

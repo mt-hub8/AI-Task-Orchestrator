@@ -18,15 +18,27 @@ public class EmbeddingProviderConfiguration {
     }
 
     @Bean
+    public LocalEmbeddingWorkerProvider localEmbeddingWorkerProvider(
+            EmbeddingProperties properties,
+            LocalEmbeddingWorkerClient client
+    ) {
+        return new LocalEmbeddingWorkerProvider(properties.getLocalWorker(), client);
+    }
+
+    @Bean
     @Primary
     public EmbeddingProvider activeEmbeddingProvider(
             EmbeddingProperties properties,
             MockEmbeddingClient mockEmbeddingClient,
-            OpenAiCompatibleEmbeddingProvider openAiCompatibleEmbeddingProvider
+            OpenAiCompatibleEmbeddingProvider openAiCompatibleEmbeddingProvider,
+            LocalEmbeddingWorkerProvider localEmbeddingWorkerProvider
     ) {
         String provider = properties.getProvider();
         if (OpenAiCompatibleEmbeddingProvider.PROVIDER.equalsIgnoreCase(provider)) {
             return openAiCompatibleEmbeddingProvider;
+        }
+        if (LocalEmbeddingWorkerProvider.PROVIDER.equalsIgnoreCase(provider)) {
+            return localEmbeddingWorkerProvider;
         }
         return mockEmbeddingClient;
     }

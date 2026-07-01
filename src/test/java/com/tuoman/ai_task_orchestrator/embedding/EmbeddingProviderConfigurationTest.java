@@ -16,8 +16,12 @@ class EmbeddingProviderConfigurationTest {
                 properties.getOpenai(),
                 (request, openAiProperties) -> new OpenAiEmbeddingResponse()
         );
+        LocalEmbeddingWorkerProvider localWorker = new LocalEmbeddingWorkerProvider(
+                properties.getLocalWorker(),
+                (request, localWorkerProperties) -> new LocalEmbeddingWorkerResponse()
+        );
 
-        EmbeddingProvider provider = configuration.activeEmbeddingProvider(properties, mock, openAi);
+        EmbeddingProvider provider = configuration.activeEmbeddingProvider(properties, mock, openAi, localWorker);
 
         assertThat(provider).isSameAs(mock);
         assertThat(provider.provider()).isEqualTo("mock");
@@ -32,10 +36,34 @@ class EmbeddingProviderConfigurationTest {
                 properties.getOpenai(),
                 (request, openAiProperties) -> new OpenAiEmbeddingResponse()
         );
+        LocalEmbeddingWorkerProvider localWorker = new LocalEmbeddingWorkerProvider(
+                properties.getLocalWorker(),
+                (request, localWorkerProperties) -> new LocalEmbeddingWorkerResponse()
+        );
 
-        EmbeddingProvider provider = configuration.activeEmbeddingProvider(properties, mock, openAi);
+        EmbeddingProvider provider = configuration.activeEmbeddingProvider(properties, mock, openAi, localWorker);
 
         assertThat(provider).isSameAs(openAi);
         assertThat(provider.provider()).isEqualTo("openai");
+    }
+
+    @Test
+    void activeEmbeddingProviderShouldUseLocalWorkerWhenConfigured() {
+        EmbeddingProperties properties = new EmbeddingProperties();
+        properties.setProvider("local-worker");
+        MockEmbeddingClient mock = new MockEmbeddingClient();
+        OpenAiCompatibleEmbeddingProvider openAi = new OpenAiCompatibleEmbeddingProvider(
+                properties.getOpenai(),
+                (request, openAiProperties) -> new OpenAiEmbeddingResponse()
+        );
+        LocalEmbeddingWorkerProvider localWorker = new LocalEmbeddingWorkerProvider(
+                properties.getLocalWorker(),
+                (request, localWorkerProperties) -> new LocalEmbeddingWorkerResponse()
+        );
+
+        EmbeddingProvider provider = configuration.activeEmbeddingProvider(properties, mock, openAi, localWorker);
+
+        assertThat(provider).isSameAs(localWorker);
+        assertThat(provider.provider()).isEqualTo("local-worker");
     }
 }
