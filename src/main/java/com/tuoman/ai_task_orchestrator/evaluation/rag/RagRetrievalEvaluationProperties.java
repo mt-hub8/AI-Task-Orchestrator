@@ -18,4 +18,8 @@ public class RagRetrievalEvaluationProperties {
     private int defaultTopK = 5;
 
     private Long documentId;
+
+    private boolean compareRerank = false;
+
+    private int candidateTopK = 20;
 }

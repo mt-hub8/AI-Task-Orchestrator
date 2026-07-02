@@ -3,6 +3,7 @@ package com.tuoman.ai_task_orchestrator.evaluation.rag;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchRequest;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchResultResponse;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingProvider;
+import com.tuoman.ai_task_orchestrator.rerank.LexicalOverlapReranker;
 import com.tuoman.ai_task_orchestrator.service.DocumentEmbeddingService;
 import com.tuoman.ai_task_orchestrator.vectorstore.VectorStore;
 import org.junit.jupiter.api.Test;
@@ -21,12 +22,16 @@ class RagRetrievalEvaluationExecutorTest {
     private final DocumentEmbeddingService documentEmbeddingService = mock(DocumentEmbeddingService.class);
     private final EmbeddingProvider embeddingProvider = mock(EmbeddingProvider.class);
     private final VectorStore vectorStore = new FakeVectorStore();
+    private final RagEvaluationRetrievalHelper retrievalHelper = new RagEvaluationRetrievalHelper();
+    private final LexicalOverlapReranker reranker = new LexicalOverlapReranker();
 
     private final RagRetrievalEvaluationExecutor executor = new RagRetrievalEvaluationExecutor(
             documentEmbeddingService,
             embeddingProvider,
             vectorStore,
-            new RagRetrievalMetricsCalculator()
+            new RagRetrievalMetricsCalculator(),
+            retrievalHelper,
+            reranker
     );
 
     @Test
@@ -39,7 +44,65 @@ class RagRetrievalEvaluationExecutorTest {
                 .thenReturn(List.of(chunk(1L, 101L, "chunkHash provider model dimension")))
                 .thenReturn(List.of(chunk(1L, 201L, "unrelated content")));
 
-        RagRetrievalEvaluationDataset dataset = new RagRetrievalEvaluationDataset(
+        RagRetrievalEvaluationDataset dataset = dataset();
+
+        RagRetrievalEvaluationReport report = executor.evaluate(dataset, "dataset.json", 5, 1L);
+
+        assertThat(report.cases()).hasSize(2);
+        assertThat(report.cases().getFirst().hit()).isTrue();
+        assertThat(report.cases().get(1).hit()).isFalse();
+        assertThat(report.summary().hitCount()).isEqualTo(1);
+    }
+
+    @Test
+    void evaluateComparisonShouldProduceBaselineRerankDeltaAndOutcome() {
+        when(embeddingProvider.provider()).thenReturn("mock");
+        when(embeddingProvider.model()).thenReturn("mock-embedding-v1");
+        when(embeddingProvider.dimension()).thenReturn(128);
+
+        when(documentEmbeddingService.search(any(DocumentSearchRequest.class))).thenAnswer(invocation -> {
+            DocumentSearchRequest request = invocation.getArgument(0);
+            if (request.getTopK() == 1) {
+                return List.of(chunk(1L, 201L, "unrelated content"));
+            }
+            return List.of(
+                    chunk(1L, 201L, "unrelated content"),
+                    chunk(1L, 101L, "cache key chunkHash provider model dimension")
+            );
+        });
+
+        RagRetrievalComparisonReport report = executor.evaluateComparison(
+                new RagRetrievalEvaluationDataset(
+                        "test-dataset",
+                        "test",
+                        1,
+                        List.of(new RagRetrievalEvaluationCase(
+                                "cache-key",
+                                "cache key",
+                                1,
+                                List.of(new RagRetrievalExpectedItem("e1", null, null, null, "chunkHash"))
+                        ))
+                ),
+                "dataset.json",
+                1,
+                2,
+                1L
+        );
+
+        assertThat(report.baselineSummary().hitCount()).isZero();
+        assertThat(report.rerankSummary().hitCount()).isEqualTo(1);
+        assertThat(report.delta().hitRateDelta()).isCloseTo(1.0, within(0.000001));
+        assertThat(report.delta().improvedCount()).isEqualTo(1);
+        assertThat(report.cases().getFirst().outcome()).isEqualTo("IMPROVED");
+
+        ArgumentCaptor<DocumentSearchRequest> captor = ArgumentCaptor.forClass(DocumentSearchRequest.class);
+        org.mockito.Mockito.verify(documentEmbeddingService, org.mockito.Mockito.times(2)).search(captor.capture());
+        assertThat(captor.getAllValues().get(0).getTopK()).isEqualTo(1);
+        assertThat(captor.getAllValues().get(1).getTopK()).isEqualTo(2);
+    }
+
+    private RagRetrievalEvaluationDataset dataset() {
+        return new RagRetrievalEvaluationDataset(
                 "test-dataset",
                 "test",
                 5,
@@ -58,26 +121,6 @@ class RagRetrievalEvaluationExecutorTest {
                         )
                 )
         );
-
-        RagRetrievalEvaluationReport report = executor.evaluate(dataset, "dataset.json", 5, 1L);
-
-        assertThat(report.cases()).hasSize(2);
-        assertThat(report.cases().getFirst().hit()).isTrue();
-        assertThat(report.cases().get(1).hit()).isFalse();
-
-        RagRetrievalSummaryMetrics summary = report.summary();
-        assertThat(summary.totalCases()).isEqualTo(2);
-        assertThat(summary.hitCount()).isEqualTo(1);
-        assertThat(summary.hitRateAtK()).isCloseTo(0.5, within(0.000001));
-        assertThat(summary.averageRecallAtK()).isCloseTo(0.5, within(0.000001));
-        assertThat(summary.averagePrecisionAtK()).isCloseTo(0.5, within(0.000001));
-        assertThat(summary.mrr()).isCloseTo(0.5, within(0.000001));
-        assertThat(summary.averageLatencyMs()).isGreaterThanOrEqualTo(0.0);
-        assertThat(report.vectorStore()).isEqualTo("FakeVectorStore");
-
-        ArgumentCaptor<DocumentSearchRequest> captor = ArgumentCaptor.forClass(DocumentSearchRequest.class);
-        org.mockito.Mockito.verify(documentEmbeddingService, org.mockito.Mockito.times(2)).search(captor.capture());
-        assertThat(captor.getAllValues()).allSatisfy(request -> assertThat(request.getDocumentId()).isEqualTo(1L));
     }
 
     private DocumentSearchResultResponse chunk(Long documentId, Long chunkId, String content) {

@@ -20,4 +20,25 @@ public class RagRetrievalMetadataResponse {
     private Integer dimension;
 
     private String vectorStore;
+
+    private Boolean rerankEnabled;
+
+    private String rerankerName;
+
+    private Integer candidateTopK;
+
+    private Integer finalTopK;
+
+    private Long rerankLatencyMs;
+
+    public RagRetrievalMetadataResponse(
+            Integer topK,
+            Integer returned,
+            String provider,
+            String model,
+            Integer dimension,
+            String vectorStore
+    ) {
+        this(topK, returned, provider, model, dimension, vectorStore, null, null, null, null, null);
+    }
 }

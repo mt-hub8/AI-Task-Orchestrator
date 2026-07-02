@@ -53,4 +53,44 @@ class RagRetrievalEvaluationReportWriterTest {
         assertThat(Files.readString(paths.markdownPath())).contains("RAG Retrieval Evaluation Report");
         assertThat(Files.readString(paths.markdownPath())).contains("cache-key");
     }
+
+    @Test
+    void shouldWriteComparisonJsonAndMarkdownReports() throws Exception {
+        RagRetrievalComparisonReport report = new RagRetrievalComparisonReport(
+                "rag-retrieval-eval-v1",
+                "docs/evaluation/rag-retrieval-eval-cases.json",
+                Instant.parse("2026-07-02T10:00:00Z"),
+                5,
+                20,
+                "mock",
+                "mock-embedding-v1",
+                128,
+                "ExactCosineVectorStore",
+                "lexical",
+                new RagRetrievalSummaryMetrics(1, 0, 0.0, 0.0, 0.0, 0.0, 10.0),
+                new RagRetrievalSummaryMetrics(1, 1, 1.0, 1.0, 1.0, 1.0, 12.0),
+                new RagRetrievalDeltaMetrics(1.0, 1.0, 1.0, 1.0, 1, 0, 0),
+                List.of(new RagRetrievalComparisonCaseResult(
+                        "cache-key",
+                        "cache key",
+                        5,
+                        20,
+                        new RagRetrievalCaseResult(
+                                "cache-key", "cache key", 5, List.of(), List.of(), List.of(),
+                                false, 0.0, 0.0, 0.0, 10
+                        ),
+                        new RagRetrievalCaseResult(
+                                "cache-key", "cache key", 5, List.of(), List.of(), List.of(),
+                                true, 1.0, 1.0, 1.0, 12
+                        ),
+                        "IMPROVED"
+                ))
+        );
+
+        RagRetrievalEvaluationReportWriter.ReportPaths paths = writer.writeComparison(report, tempDir);
+
+        assertThat(Files.exists(paths.jsonPath())).isTrue();
+        assertThat(Files.readString(paths.markdownPath())).contains("Baseline vs Rerank Comparison");
+        assertThat(Files.readString(paths.markdownPath())).contains("IMPROVED");
+    }
 }

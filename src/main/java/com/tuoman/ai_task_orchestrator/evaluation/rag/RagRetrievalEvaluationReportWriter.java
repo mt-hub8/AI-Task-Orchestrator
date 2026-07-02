@@ -18,6 +18,10 @@ public class RagRetrievalEvaluationReportWriter {
 
     public static final String MARKDOWN_REPORT_NAME = "rag-retrieval-evaluation-report.md";
 
+    public static final String COMPARISON_JSON_REPORT_NAME = "rag-retrieval-comparison-report.json";
+
+    public static final String COMPARISON_MARKDOWN_REPORT_NAME = "rag-retrieval-comparison-report.md";
+
     private final ObjectMapper objectMapper;
 
     public RagRetrievalEvaluationReportWriter(ObjectMapper objectMapper) {
@@ -28,15 +32,31 @@ public class RagRetrievalEvaluationReportWriter {
         Files.createDirectories(outputDir);
 
         Path jsonPath = outputDir.resolve(JSON_REPORT_NAME);
-        ObjectMapper prettyMapper = objectMapper.copy()
-                .registerModule(new JavaTimeModule())
-                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
-                .enable(SerializationFeature.INDENT_OUTPUT);
+        ObjectMapper prettyMapper = createPrettyMapper();
         prettyMapper.writeValue(jsonPath.toFile(), report);
 
         Path markdownPath = outputDir.resolve(MARKDOWN_REPORT_NAME);
         Files.writeString(markdownPath, toMarkdown(report));
         return new ReportPaths(jsonPath, markdownPath);
+    }
+
+    public ReportPaths writeComparison(RagRetrievalComparisonReport report, Path outputDir) throws IOException {
+        Files.createDirectories(outputDir);
+
+        Path jsonPath = outputDir.resolve(COMPARISON_JSON_REPORT_NAME);
+        ObjectMapper prettyMapper = createPrettyMapper();
+        prettyMapper.writeValue(jsonPath.toFile(), report);
+
+        Path markdownPath = outputDir.resolve(COMPARISON_MARKDOWN_REPORT_NAME);
+        Files.writeString(markdownPath, toComparisonMarkdown(report));
+        return new ReportPaths(jsonPath, markdownPath);
+    }
+
+    private ObjectMapper createPrettyMapper() {
+        return objectMapper.copy()
+                .registerModule(new JavaTimeModule())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .enable(SerializationFeature.INDENT_OUTPUT);
     }
 
     private String toMarkdown(RagRetrievalEvaluationReport report) {
@@ -51,19 +71,9 @@ public class RagRetrievalEvaluationReportWriter {
         markdown.append("- **Embedding dimension**: ").append(report.embeddingDimension()).append('\n');
         markdown.append("- **VectorStore**: ").append(report.vectorStore()).append("\n\n");
 
-        markdown.append("## Summary Metrics\n\n");
-        markdown.append("| totalCases | hitCount | HitRate@K | avg Recall@K | avg Precision@K | MRR | avg Latency (ms) |\n");
-        markdown.append("|---:|---:|---:|---:|---:|---:|---:|\n");
-        RagRetrievalSummaryMetrics summary = report.summary();
-        markdown.append('|').append(summary.totalCases()).append('|');
-        markdown.append(summary.hitCount()).append('|');
-        markdown.append(format(summary.hitRateAtK())).append('|');
-        markdown.append(format(summary.averageRecallAtK())).append('|');
-        markdown.append(format(summary.averagePrecisionAtK())).append('|');
-        markdown.append(format(summary.mrr())).append('|');
-        markdown.append(format(summary.averageLatencyMs())).append("|\n\n");
+        appendSummaryTable(markdown, "Summary Metrics", report.summary());
 
-        markdown.append("## Per-case Results\n\n");
+        markdown.append("\n## Per-case Results\n\n");
         markdown.append("| caseId | topK | hit | recall | precision | rr | latencyMs | matched/expected |\n");
         markdown.append("|---|---:|---:|---:|---:|---:|---:|---:|\n");
         for (RagRetrievalCaseResult caseResult : report.cases()) {
@@ -97,6 +107,75 @@ public class RagRetrievalEvaluationReportWriter {
         markdown.append("- 本报告中的 `Precision@K` 使用 `matched expected count / retrieved count`，");
         markdown.append("分母为该 case 实际返回结果条数，而非固定 K。\n");
         return markdown.toString();
+    }
+
+    private String toComparisonMarkdown(RagRetrievalComparisonReport report) {
+        StringBuilder markdown = new StringBuilder();
+        markdown.append("# RAG Retrieval Baseline vs Rerank Comparison Report\n\n");
+        markdown.append("- **Dataset**: ").append(report.datasetName()).append('\n');
+        markdown.append("- **Dataset path**: ").append(report.datasetPath()).append('\n');
+        markdown.append("- **Run at**: ").append(report.runAt()).append('\n');
+        markdown.append("- **Default TopK**: ").append(report.defaultTopK()).append('\n');
+        markdown.append("- **Candidate TopK**: ").append(report.candidateTopK()).append('\n');
+        markdown.append("- **Reranker**: ").append(report.rerankerName()).append("\n\n");
+
+        appendSummaryTable(markdown, "Baseline Summary", report.baselineSummary());
+        markdown.append('\n');
+        appendSummaryTable(markdown, "Rerank Summary", report.rerankSummary());
+        markdown.append("\n## Delta (rerank - baseline)\n\n");
+        RagRetrievalDeltaMetrics delta = report.delta();
+        markdown.append("| HitRate@K Δ | Recall@K Δ | Precision@K Δ | MRR Δ | improved | regressed | unchanged |\n");
+        markdown.append("|---:|---:|---:|---:|---:|---:|---:|\n");
+        markdown.append('|').append(format(delta.hitRateDelta())).append('|');
+        markdown.append(format(delta.recallDelta())).append('|');
+        markdown.append(format(delta.precisionDelta())).append('|');
+        markdown.append(format(delta.mrrDelta())).append('|');
+        markdown.append(delta.improvedCount()).append('|');
+        markdown.append(delta.regressedCount()).append('|');
+        markdown.append(delta.unchangedCount()).append("|\n\n");
+
+        markdown.append("## Per-case Comparison\n\n");
+        markdown.append("| caseId | outcome | baseline rr | rerank rr | baseline hit | rerank hit |\n");
+        markdown.append("|---|---|---:|---:|---:|---:|\n");
+        for (RagRetrievalComparisonCaseResult caseResult : report.cases()) {
+            markdown.append('|').append(caseResult.caseId()).append('|');
+            markdown.append(caseResult.outcome()).append('|');
+            markdown.append(format(caseResult.baseline().rrAtK())).append('|');
+            markdown.append(format(caseResult.rerank().rrAtK())).append('|');
+            markdown.append(caseResult.baseline().hit() ? "1" : "0").append('|');
+            markdown.append(caseResult.rerank().hit() ? "1" : "0").append("|\n");
+        }
+
+        markdown.append("\n## Improved Cases\n\n");
+        appendCaseIds(markdown, report.cases().stream().filter(c -> "IMPROVED".equals(c.outcome())).toList());
+        markdown.append("\n## Regressed Cases\n\n");
+        appendCaseIds(markdown, report.cases().stream().filter(c -> "REGRESSED".equals(c.outcome())).toList());
+        markdown.append("\n## Missed Cases (rerank)\n\n");
+        appendCaseIds(markdown, report.cases().stream().filter(c -> !c.rerank().hit()).toList());
+        return markdown.toString();
+    }
+
+    private void appendSummaryTable(StringBuilder markdown, String title, RagRetrievalSummaryMetrics summary) {
+        markdown.append("## ").append(title).append("\n\n");
+        markdown.append("| totalCases | hitCount | HitRate@K | avg Recall@K | avg Precision@K | MRR | avg Latency (ms) |\n");
+        markdown.append("|---:|---:|---:|---:|---:|---:|---:|\n");
+        markdown.append('|').append(summary.totalCases()).append('|');
+        markdown.append(summary.hitCount()).append('|');
+        markdown.append(format(summary.hitRateAtK())).append('|');
+        markdown.append(format(summary.averageRecallAtK())).append('|');
+        markdown.append(format(summary.averagePrecisionAtK())).append('|');
+        markdown.append(format(summary.mrr())).append('|');
+        markdown.append(format(summary.averageLatencyMs())).append("|\n");
+    }
+
+    private void appendCaseIds(StringBuilder markdown, List<RagRetrievalComparisonCaseResult> cases) {
+        if (cases.isEmpty()) {
+            markdown.append("- None.\n");
+            return;
+        }
+        for (RagRetrievalComparisonCaseResult caseResult : cases) {
+            markdown.append("- `").append(caseResult.caseId()).append("`\n");
+        }
     }
 
     private String format(double value) {

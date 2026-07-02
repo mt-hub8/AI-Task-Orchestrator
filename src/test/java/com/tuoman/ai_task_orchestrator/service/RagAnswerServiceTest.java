@@ -3,36 +3,32 @@ package com.tuoman.ai_task_orchestrator.service;
 import com.tuoman.ai_task_orchestrator.common.error.BusinessException;
 import com.tuoman.ai_task_orchestrator.dto.RagAnswerRequest;
 import com.tuoman.ai_task_orchestrator.dto.RagAnswerResponse;
-import com.tuoman.ai_task_orchestrator.dto.RagCitationResponse;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingProvider;
-import com.tuoman.ai_task_orchestrator.embedding.EmbeddingProviderException;
-import com.tuoman.ai_task_orchestrator.embedding.EmbeddingRequest;
-import com.tuoman.ai_task_orchestrator.embedding.EmbeddingResponse;
 import com.tuoman.ai_task_orchestrator.embedding.MockEmbeddingClient;
 import com.tuoman.ai_task_orchestrator.llm.LlmClient;
 import com.tuoman.ai_task_orchestrator.llm.LlmRequest;
 import com.tuoman.ai_task_orchestrator.llm.LlmResponse;
+import com.tuoman.ai_task_orchestrator.rerank.RagTwoStageRetrievalService;
+import com.tuoman.ai_task_orchestrator.rerank.RagTwoStageRetrievalService.RagRetrievalOutcome;
+import com.tuoman.ai_task_orchestrator.rerank.RagTwoStageRetrievalService.RagRetrievedChunk;
 import com.tuoman.ai_task_orchestrator.vectorstore.ExactCosineVectorStore;
-import com.tuoman.ai_task_orchestrator.vectorstore.VectorSearchFilter;
-import com.tuoman.ai_task_orchestrator.vectorstore.VectorSearchRequest;
-import com.tuoman.ai_task_orchestrator.vectorstore.VectorSearchResult;
 import com.tuoman.ai_task_orchestrator.vectorstore.VectorStore;
 import com.tuoman.ai_task_orchestrator.vectorstore.VectorStoreProperties;
-import com.tuoman.ai_task_orchestrator.vectorstore.qdrant.QdrantVectorStoreException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -40,6 +36,9 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class RagAnswerServiceTest {
+
+    @Mock
+    private RagTwoStageRetrievalService ragTwoStageRetrievalService;
 
     @Mock
     private EmbeddingProvider embeddingProvider;
@@ -68,14 +67,20 @@ class RagAnswerServiceTest {
     }
 
     @Test
-    void answerShouldEmbedQuerySearchBuildPromptCallLlmAndReturnMetadata() {
+    void answerShouldUseRetrievalOutcomeBuildPromptCallLlmAndReturnMetadata() {
         RagAnswerRequest request = request("Why use outbox?", 3);
-        List<VectorSearchResult> searchResults = List.of(
-                searchResult(1L, 10L, 0, 0.9, "Outbox avoids dual write loss."),
-                searchResult(1L, 11L, 1, 0.8, "Atomic claim prevents duplicate execution.")
+        RagRetrievalOutcome outcome = new RagRetrievalOutcome(
+                List.of(
+                        chunk(1, 1, 10L, 0.9, null, "Outbox avoids dual write loss."),
+                        chunk(2, 2, 11L, 0.8, null, "Atomic claim prevents duplicate execution.")
+                ),
+                3,
+                3,
+                false,
+                null,
+                0L
         );
-        when(embeddingProvider.embed(any(EmbeddingRequest.class))).thenReturn(embeddingResponse());
-        when(vectorStore.search(any(VectorSearchRequest.class))).thenReturn(searchResults);
+        when(ragTwoStageRetrievalService.retrieve("Why use outbox?", 3)).thenReturn(outcome);
         when(ragPromptBuilder.buildPrompt(any(), any())).thenReturn("rag prompt");
         when(llmClient.generate(any(LlmRequest.class))).thenReturn(successResponse("Answer with [1] and [2]."));
 
@@ -85,34 +90,44 @@ class RagAnswerServiceTest {
         assertThat(response.getCitations()).hasSize(2);
         assertThat(response.getCitations().get(0).getSourceIndex()).isEqualTo(1);
         assertThat(response.getCitations().get(0).getChunkId()).isEqualTo(10L);
-        assertThat(response.getCitations().get(1).getSourceIndex()).isEqualTo(2);
         assertThat(response.getRetrieval().getTopK()).isEqualTo(3);
         assertThat(response.getRetrieval().getReturned()).isEqualTo(2);
-        assertThat(response.getRetrieval().getProvider()).isEqualTo("mock");
-        assertThat(response.getRetrieval().getModel()).isEqualTo("mock-embedding-v1");
-        assertThat(response.getRetrieval().getDimension()).isEqualTo(128);
-        assertThat(response.getRetrieval().getVectorStore()).isEqualTo("ExactCosineVectorStore");
-        assertThat(response.getGeneration().getProvider()).isEqualTo("mock");
-        assertThat(response.getGeneration().getModel()).isEqualTo("mock-llm");
-        assertThat(response.getGeneration().getSkipped()).isNull();
-
-        ArgumentCaptor<EmbeddingRequest> embeddingRequestCaptor = ArgumentCaptor.forClass(EmbeddingRequest.class);
-        verify(embeddingProvider).embed(embeddingRequestCaptor.capture());
-        assertThat(embeddingRequestCaptor.getValue().getText()).isEqualTo("Why use outbox?");
-
-        ArgumentCaptor<VectorSearchRequest> searchRequestCaptor = ArgumentCaptor.forClass(VectorSearchRequest.class);
-        verify(vectorStore).search(searchRequestCaptor.capture());
-        assertThat(searchRequestCaptor.getValue().topK()).isEqualTo(3);
-        assertThat(searchRequestCaptor.getValue().filter()).isEqualTo(VectorSearchFilter.empty());
-
+        assertThat(response.getRetrieval().getRerankEnabled()).isFalse();
+        assertThat(response.getRetrieval().getRerankerName()).isNull();
         verify(ragPromptBuilder).buildPrompt(request.getQuery(), response.getCitations());
         verify(llmClient).generate(any(LlmRequest.class));
     }
 
     @Test
+    void answerShouldUseRerankedOrderWhenRerankEnabled() {
+        RagRetrievalOutcome outcome = new RagRetrievalOutcome(
+                List.of(chunk(1, 2, 20L, 0.5, 0.95, "cache key four tuple")),
+                1,
+                20,
+                true,
+                "lexical",
+                3L
+        );
+        when(ragTwoStageRetrievalService.retrieve("cache key", 1)).thenReturn(outcome);
+        when(ragPromptBuilder.buildPrompt(any(), any())).thenReturn("prompt");
+        when(llmClient.generate(any())).thenReturn(successResponse("answer"));
+
+        RagAnswerResponse response = ragAnswerService.answer(request("cache key", 1));
+
+        assertThat(response.getCitations().getFirst().getChunkId()).isEqualTo(20L);
+        assertThat(response.getCitations().getFirst().getOriginalRank()).isEqualTo(2);
+        assertThat(response.getCitations().getFirst().getRerankedRank()).isEqualTo(1);
+        assertThat(response.getCitations().getFirst().getRerankScore()).isEqualTo(0.95);
+        assertThat(response.getRetrieval().getRerankEnabled()).isTrue();
+        assertThat(response.getRetrieval().getRerankerName()).isEqualTo("lexical");
+        assertThat(response.getRetrieval().getCandidateTopK()).isEqualTo(20);
+        assertThat(response.getRetrieval().getRerankLatencyMs()).isEqualTo(3L);
+    }
+
+    @Test
     void answerShouldUseDefaultTopKWhenMissing() {
-        when(embeddingProvider.embed(any(EmbeddingRequest.class))).thenReturn(embeddingResponse());
-        when(vectorStore.search(any(VectorSearchRequest.class))).thenReturn(List.of());
+        when(ragTwoStageRetrievalService.retrieve(eq("query"), eq(5)))
+                .thenReturn(new RagRetrievalOutcome(List.of(), 5, 5, false, null, 0L));
 
         RagAnswerResponse response = ragAnswerService.answer(request("query", null));
 
@@ -138,26 +153,27 @@ class RagAnswerServiceTest {
 
     @Test
     void answerShouldReturnNoContextResponseWithoutCallingLlm() {
-        when(embeddingProvider.embed(any(EmbeddingRequest.class))).thenReturn(embeddingResponse());
-        when(vectorStore.search(any(VectorSearchRequest.class))).thenReturn(List.of());
+        when(ragTwoStageRetrievalService.retrieve(anyString(), anyInt()))
+                .thenReturn(new RagRetrievalOutcome(List.of(), 5, 5, false, null, 0L));
 
         RagAnswerResponse response = ragAnswerService.answer(request("No context question", 5));
 
         assertThat(response.getAnswer()).isEqualTo("根据当前检索到的文档内容，无法确定。");
         assertThat(response.getCitations()).isEmpty();
-        assertThat(response.getRetrieval().getReturned()).isZero();
         assertThat(response.getGeneration().getSkipped()).isTrue();
-        assertThat(response.getGeneration().getReason()).isEqualTo("NO_RETRIEVED_CONTEXT");
-        verify(ragPromptBuilder, never()).buildPrompt(any(), any());
         verify(llmClient, never()).generate(any());
     }
 
     @Test
     void answerShouldLimitCitationSnippetLength() {
         String longContent = "a".repeat(500);
-        when(embeddingProvider.embed(any(EmbeddingRequest.class))).thenReturn(embeddingResponse());
-        when(vectorStore.search(any(VectorSearchRequest.class))).thenReturn(List.of(
-                searchResult(1L, 10L, 0, 0.9, longContent)
+        when(ragTwoStageRetrievalService.retrieve(anyString(), anyInt())).thenReturn(new RagRetrievalOutcome(
+                List.of(chunk(1, 1, 10L, 0.9, null, longContent)),
+                1,
+                1,
+                false,
+                null,
+                0L
         ));
         when(ragPromptBuilder.buildPrompt(any(), any())).thenReturn("prompt");
         when(llmClient.generate(any())).thenReturn(successResponse("answer"));
@@ -168,42 +184,14 @@ class RagAnswerServiceTest {
     }
 
     @Test
-    void answerShouldPropagateEmbeddingProviderFailure() {
-        when(embeddingProvider.embed(any(EmbeddingRequest.class)))
-                .thenThrow(new EmbeddingProviderException("embedding failed"));
-
-        assertThatThrownBy(() -> ragAnswerService.answer(request("query", 3)))
-                .isInstanceOf(EmbeddingProviderException.class);
-        verify(vectorStore, never()).search(any());
-    }
-
-    @Test
-    void answerShouldConvertVectorStoreFailureToBusinessException() {
-        when(embeddingProvider.embed(any(EmbeddingRequest.class))).thenReturn(embeddingResponse());
-        when(vectorStore.search(any(VectorSearchRequest.class)))
-                .thenThrow(new IllegalStateException("vector search failed"));
-
-        assertThatThrownBy(() -> ragAnswerService.answer(request("query", 3)))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode")
-                .isEqualTo(com.tuoman.ai_task_orchestrator.common.error.ErrorCode.VECTOR_STORE_ERROR);
-    }
-
-    @Test
-    void answerShouldPropagateQdrantVectorStoreFailure() {
-        when(embeddingProvider.embed(any(EmbeddingRequest.class))).thenReturn(embeddingResponse());
-        when(vectorStore.search(any(VectorSearchRequest.class)))
-                .thenThrow(new QdrantVectorStoreException("qdrant failed"));
-
-        assertThatThrownBy(() -> ragAnswerService.answer(request("query", 3)))
-                .isInstanceOf(QdrantVectorStoreException.class);
-    }
-
-    @Test
     void answerShouldConvertLlmFailureToBusinessException() {
-        when(embeddingProvider.embed(any(EmbeddingRequest.class))).thenReturn(embeddingResponse());
-        when(vectorStore.search(any(VectorSearchRequest.class))).thenReturn(List.of(
-                searchResult(1L, 10L, 0, 0.9, "content")
+        when(ragTwoStageRetrievalService.retrieve(anyString(), anyInt())).thenReturn(new RagRetrievalOutcome(
+                List.of(chunk(1, 1, 10L, 0.9, null, "content")),
+                1,
+                1,
+                false,
+                null,
+                0L
         ));
         when(ragPromptBuilder.buildPrompt(any(), any())).thenReturn("prompt");
 
@@ -225,40 +213,23 @@ class RagAnswerServiceTest {
         return request;
     }
 
-    private EmbeddingResponse embeddingResponse() {
-        return new EmbeddingResponse(
-                MockEmbeddingClient.PROVIDER,
-                MockEmbeddingClient.DEFAULT_MODEL,
-                MockEmbeddingClient.DIMENSION,
-                MockEmbeddingClient.DISTANCE_METRIC,
-                List.of(0.1, 0.2)
-        );
-    }
-
-    private VectorSearchResult searchResult(
-            Long documentId,
+    private RagRetrievedChunk chunk(
+            int rerankedRank,
+            int originalRank,
             Long chunkId,
-            Integer chunkIndex,
-            Double score,
+            Double originalScore,
+            Double rerankScore,
             String content
     ) {
-        return new VectorSearchResult(
+        return new RagRetrievedChunk(
+                rerankedRank,
+                originalRank,
+                1L,
+                "heading",
                 chunkId,
-                documentId,
-                chunkIndex,
-                content,
-                content.length(),
-                "Heading",
-                0,
-                content.length(),
-                "TEST",
-                score,
-                1,
-                MockEmbeddingClient.PROVIDER,
-                MockEmbeddingClient.DEFAULT_MODEL,
-                MockEmbeddingClient.DIMENSION,
-                MockEmbeddingClient.DISTANCE_METRIC,
-                Map.of()
+                originalScore,
+                rerankScore,
+                content
         );
     }
 

@@ -3,6 +3,7 @@ package com.tuoman.ai_task_orchestrator.evaluation.rag;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchRequest;
 import com.tuoman.ai_task_orchestrator.dto.DocumentSearchResultResponse;
 import com.tuoman.ai_task_orchestrator.embedding.EmbeddingProvider;
+import com.tuoman.ai_task_orchestrator.rerank.Reranker;
 import com.tuoman.ai_task_orchestrator.service.DocumentEmbeddingService;
 import com.tuoman.ai_task_orchestrator.vectorstore.VectorStore;
 import org.springframework.stereotype.Component;
@@ -24,16 +25,24 @@ public class RagRetrievalEvaluationExecutor {
 
     private final RagRetrievalMetricsCalculator metricsCalculator;
 
+    private final RagEvaluationRetrievalHelper retrievalHelper;
+
+    private final Reranker reranker;
+
     public RagRetrievalEvaluationExecutor(
             DocumentEmbeddingService documentEmbeddingService,
             EmbeddingProvider embeddingProvider,
             VectorStore vectorStore,
-            RagRetrievalMetricsCalculator metricsCalculator
+            RagRetrievalMetricsCalculator metricsCalculator,
+            RagEvaluationRetrievalHelper retrievalHelper,
+            Reranker reranker
     ) {
         this.documentEmbeddingService = documentEmbeddingService;
         this.embeddingProvider = embeddingProvider;
         this.vectorStore = vectorStore;
         this.metricsCalculator = metricsCalculator;
+        this.retrievalHelper = retrievalHelper;
+        this.reranker = reranker;
     }
 
     public RagRetrievalEvaluationReport evaluate(
@@ -89,6 +98,170 @@ public class RagRetrievalEvaluationExecutor {
                 summary,
                 caseResults
         );
+    }
+
+    public RagRetrievalComparisonReport evaluateComparison(
+            RagRetrievalEvaluationDataset dataset,
+            String datasetPath,
+            int fallbackTopK,
+            int candidateTopK,
+            Long documentId
+    ) {
+        List<RagRetrievalComparisonCaseResult> comparisonCases = new ArrayList<>();
+        int datasetDefaultTopK = dataset.defaultTopK() == null ? fallbackTopK : dataset.defaultTopK();
+        String rerankerName = reranker.name();
+
+        for (RagRetrievalEvaluationCase evaluationCase : dataset.cases()) {
+            int finalTopK = normalizeTopK(evaluationCase.topK(), datasetDefaultTopK, fallbackTopK);
+            validateCandidateTopK(candidateTopK, finalTopK);
+
+            long baselineStartedAt = System.nanoTime();
+            List<RagRetrievedItem> baselineItems = retrievalHelper.searchBaseline(
+                    documentEmbeddingService,
+                    evaluationCase.query(),
+                    finalTopK,
+                    documentId
+            );
+            long baselineLatencyMs = (System.nanoTime() - baselineStartedAt) / 1_000_000;
+            RagRetrievalCaseResult baselineCase = toCaseResult(
+                    evaluationCase,
+                    finalTopK,
+                    baselineItems,
+                    baselineLatencyMs
+            );
+
+            RagEvaluationRetrievalHelper.RerankSearchOutcome rerankOutcome = retrievalHelper.searchWithRerank(
+                    documentEmbeddingService,
+                    reranker,
+                    evaluationCase.query(),
+                    finalTopK,
+                    candidateTopK,
+                    documentId
+            );
+            RagRetrievalCaseResult rerankCase = toCaseResult(
+                    evaluationCase,
+                    finalTopK,
+                    rerankOutcome.items(),
+                    rerankOutcome.latencyMs()
+            );
+            rerankerName = rerankOutcome.rerankerName();
+
+            comparisonCases.add(new RagRetrievalComparisonCaseResult(
+                    evaluationCase.caseId(),
+                    evaluationCase.query(),
+                    finalTopK,
+                    candidateTopK,
+                    baselineCase,
+                    rerankCase,
+                    resolveOutcome(baselineCase, rerankCase)
+            ));
+        }
+
+        List<RagRetrievalCaseResult> baselineCases = comparisonCases.stream()
+                .map(RagRetrievalComparisonCaseResult::baseline)
+                .toList();
+        List<RagRetrievalCaseResult> rerankCases = comparisonCases.stream()
+                .map(RagRetrievalComparisonCaseResult::rerank)
+                .toList();
+
+        RagRetrievalSummaryMetrics baselineSummary = summarize(baselineCases);
+        RagRetrievalSummaryMetrics rerankSummary = summarize(rerankCases);
+
+        return new RagRetrievalComparisonReport(
+                dataset.datasetName(),
+                datasetPath,
+                Instant.now(),
+                datasetDefaultTopK,
+                candidateTopK,
+                embeddingProvider.provider(),
+                embeddingProvider.model(),
+                embeddingProvider.dimension(),
+                vectorStore.getClass().getSimpleName(),
+                rerankerName,
+                baselineSummary,
+                rerankSummary,
+                toDelta(baselineSummary, rerankSummary, comparisonCases),
+                comparisonCases
+        );
+    }
+
+    private RagRetrievalCaseResult toCaseResult(
+            RagRetrievalEvaluationCase evaluationCase,
+            int topK,
+            List<RagRetrievedItem> retrievedItems,
+            long latencyMs
+    ) {
+        List<RagRetrievalExpectedItem> matchedExpectedItems = evaluationCase.expectedItems().stream()
+                .filter(expected -> retrievedItems.stream().anyMatch(retrieved -> metricsCalculator.matches(expected, retrieved)))
+                .toList();
+
+        RagCaseMetrics metrics = metricsCalculator.calculate(
+                evaluationCase.expectedItems(),
+                matchedExpectedItems,
+                retrievedItems
+        );
+
+        return new RagRetrievalCaseResult(
+                evaluationCase.caseId(),
+                evaluationCase.query(),
+                topK,
+                evaluationCase.expectedItems(),
+                retrievedItems,
+                matchedExpectedItems,
+                metrics.hit(),
+                metrics.recallAtK(),
+                metrics.precisionAtK(),
+                metrics.rrAtK(),
+                latencyMs
+        );
+    }
+
+    private RagRetrievalDeltaMetrics toDelta(
+            RagRetrievalSummaryMetrics baseline,
+            RagRetrievalSummaryMetrics rerank,
+            List<RagRetrievalComparisonCaseResult> cases
+    ) {
+        int improved = 0;
+        int regressed = 0;
+        int unchanged = 0;
+        for (RagRetrievalComparisonCaseResult caseResult : cases) {
+            switch (caseResult.outcome()) {
+                case "IMPROVED" -> improved++;
+                case "REGRESSED" -> regressed++;
+                default -> unchanged++;
+            }
+        }
+        return new RagRetrievalDeltaMetrics(
+                rerank.hitRateAtK() - baseline.hitRateAtK(),
+                rerank.averageRecallAtK() - baseline.averageRecallAtK(),
+                rerank.averagePrecisionAtK() - baseline.averagePrecisionAtK(),
+                rerank.mrr() - baseline.mrr(),
+                improved,
+                regressed,
+                unchanged
+        );
+    }
+
+    private String resolveOutcome(RagRetrievalCaseResult baseline, RagRetrievalCaseResult rerank) {
+        if (rerank.rrAtK() > baseline.rrAtK() + 0.000001) {
+            return "IMPROVED";
+        }
+        if (rerank.rrAtK() < baseline.rrAtK() - 0.000001) {
+            return "REGRESSED";
+        }
+        if (rerank.hit() && !baseline.hit()) {
+            return "IMPROVED";
+        }
+        if (!rerank.hit() && baseline.hit()) {
+            return "REGRESSED";
+        }
+        return "UNCHANGED";
+    }
+
+    private void validateCandidateTopK(int candidateTopK, int finalTopK) {
+        if (candidateTopK < finalTopK) {
+            throw new IllegalArgumentException("candidateTopK must be greater than or equal to finalTopK");
+        }
     }
 
     private List<RagRetrievedItem> search(String query, int topK, Long documentId) {

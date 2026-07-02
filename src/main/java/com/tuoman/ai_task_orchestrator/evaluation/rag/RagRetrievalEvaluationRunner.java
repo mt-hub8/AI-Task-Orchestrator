@@ -39,6 +39,24 @@ public class RagRetrievalEvaluationRunner implements ApplicationRunner {
     public void run(ApplicationArguments args) throws Exception {
         Path datasetPath = Path.of(properties.getDatasetPath());
         RagRetrievalEvaluationDataset dataset = datasetLoader.load(datasetPath);
+        Path outputDir = Path.of(properties.getReportOutputDir());
+
+        if (properties.isCompareRerank()) {
+            RagRetrievalComparisonReport comparisonReport = evaluationExecutor.evaluateComparison(
+                    dataset,
+                    datasetPath.toString(),
+                    properties.getDefaultTopK(),
+                    properties.getCandidateTopK(),
+                    properties.getDocumentId()
+            );
+            RagRetrievalEvaluationReportWriter.ReportPaths reportPaths = reportWriter.writeComparison(
+                    comparisonReport,
+                    outputDir
+            );
+            log.info("RAG retrieval comparison evaluation done, json={}, markdown={}",
+                    reportPaths.jsonPath(), reportPaths.markdownPath());
+            return;
+        }
 
         RagRetrievalEvaluationReport report = evaluationExecutor.evaluate(
                 dataset,
@@ -47,10 +65,7 @@ public class RagRetrievalEvaluationRunner implements ApplicationRunner {
                 properties.getDocumentId()
         );
 
-        RagRetrievalEvaluationReportWriter.ReportPaths reportPaths = reportWriter.write(
-                report,
-                Path.of(properties.getReportOutputDir())
-        );
+        RagRetrievalEvaluationReportWriter.ReportPaths reportPaths = reportWriter.write(report, outputDir);
         log.info("RAG retrieval evaluation done, json={}, markdown={}", reportPaths.jsonPath(), reportPaths.markdownPath());
     }
 }

@@ -1,31 +1,26 @@
 package com.tuoman.ai_task_orchestrator.service;
 
 import com.tuoman.ai_task_orchestrator.common.error.BusinessException;
-import com.tuoman.ai_task_orchestrator.dto.DocumentSearchResultResponse;
 import com.tuoman.ai_task_orchestrator.dto.RagAnswerRequest;
 import com.tuoman.ai_task_orchestrator.dto.RagAnswerResponse;
 import com.tuoman.ai_task_orchestrator.dto.RagCitationResponse;
 import com.tuoman.ai_task_orchestrator.dto.RagGenerationMetadataResponse;
 import com.tuoman.ai_task_orchestrator.dto.RagRetrievalMetadataResponse;
-import com.tuoman.ai_task_orchestrator.embedding.EmbeddingProvider;
-import com.tuoman.ai_task_orchestrator.embedding.EmbeddingRequest;
-import com.tuoman.ai_task_orchestrator.embedding.EmbeddingResponse;
 import com.tuoman.ai_task_orchestrator.llm.LlmClient;
 import com.tuoman.ai_task_orchestrator.llm.LlmRequest;
 import com.tuoman.ai_task_orchestrator.llm.LlmResponse;
+import com.tuoman.ai_task_orchestrator.embedding.EmbeddingProvider;
+import com.tuoman.ai_task_orchestrator.rerank.RagTwoStageRetrievalService;
+import com.tuoman.ai_task_orchestrator.rerank.RagTwoStageRetrievalService.RagRetrievalOutcome;
+import com.tuoman.ai_task_orchestrator.rerank.RagTwoStageRetrievalService.RagRetrievedChunk;
 import com.tuoman.ai_task_orchestrator.vectorstore.ExactCosineVectorStore;
-import com.tuoman.ai_task_orchestrator.vectorstore.VectorSearchFilter;
-import com.tuoman.ai_task_orchestrator.vectorstore.VectorSearchRequest;
-import com.tuoman.ai_task_orchestrator.vectorstore.VectorSearchResult;
 import com.tuoman.ai_task_orchestrator.vectorstore.VectorStore;
 import com.tuoman.ai_task_orchestrator.vectorstore.VectorStoreProperties;
 import com.tuoman.ai_task_orchestrator.vectorstore.qdrant.QdrantVectorStore;
-import com.tuoman.ai_task_orchestrator.vectorstore.qdrant.QdrantVectorStoreException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-import java.util.stream.IntStream;
 
 @Service
 @RequiredArgsConstructor
@@ -43,6 +38,8 @@ public class RagAnswerService {
 
     private static final String DEFAULT_LLM_MODEL = "mock-llm";
 
+    private final RagTwoStageRetrievalService ragTwoStageRetrievalService;
+
     private final EmbeddingProvider embeddingProvider;
 
     private final VectorStore vectorStore;
@@ -59,9 +56,9 @@ public class RagAnswerService {
         }
 
         int topK = normalizeTopK(request.getTopK());
-        List<DocumentSearchResultResponse> chunks = retrieveChunks(request.getQuery(), topK);
-        List<RagCitationResponse> citations = toCitations(chunks);
-        RagRetrievalMetadataResponse retrieval = toRetrievalMetadata(topK, chunks);
+        RagRetrievalOutcome retrievalOutcome = ragTwoStageRetrievalService.retrieve(request.getQuery(), topK);
+        List<RagCitationResponse> citations = toCitations(retrievalOutcome, retrievalOutcome.rerankEnabled());
+        RagRetrievalMetadataResponse retrieval = toRetrievalMetadata(retrievalOutcome);
 
         if (citations.isEmpty()) {
             return new RagAnswerResponse(
@@ -99,75 +96,40 @@ public class RagAnswerService {
         );
     }
 
-    private List<DocumentSearchResultResponse> retrieveChunks(String query, int topK) {
-        EmbeddingRequest embeddingRequest = new EmbeddingRequest();
-        embeddingRequest.setText(query);
-        embeddingRequest.setModel(embeddingProvider.model());
-        EmbeddingResponse queryEmbedding = embeddingProvider.embed(embeddingRequest);
-
-        try {
-            return vectorStore.search(new VectorSearchRequest(
-                            queryEmbedding.getVector(),
-                            topK,
-                            embeddingProvider.provider(),
-                            embeddingProvider.model(),
-                            queryEmbedding.getDimension(),
-                            VectorSearchFilter.empty()
-                    ))
-                    .stream()
-                    .map(this::toSearchResponse)
-                    .toList();
-        } catch (QdrantVectorStoreException exception) {
-            throw exception;
-        } catch (RuntimeException exception) {
-            throw BusinessException.vectorStoreError(
-                    exception.getMessage() == null ? "Vector store search failed" : exception.getMessage()
-            );
-        }
-    }
-
-    private List<RagCitationResponse> toCitations(List<DocumentSearchResultResponse> chunks) {
-        return IntStream.range(0, chunks.size())
-                .mapToObj(index -> toCitation(index + 1, chunks.get(index)))
+    private List<RagCitationResponse> toCitations(RagRetrievalOutcome outcome, boolean rerankEnabled) {
+        return outcome.chunks().stream()
+                .map(chunk -> toCitation(chunk, rerankEnabled))
                 .toList();
     }
 
-    private RagCitationResponse toCitation(int sourceIndex, DocumentSearchResultResponse chunk) {
+    private RagCitationResponse toCitation(RagRetrievedChunk chunk, boolean rerankEnabled) {
+        Double displayScore = rerankEnabled ? chunk.rerankScore() : chunk.originalScore();
         return new RagCitationResponse(
-                sourceIndex,
-                chunk.getDocumentId(),
-                chunk.getChunkId(),
-                chunk.getScore(),
-                contentSnippet(chunk.getContent())
+                chunk.rerankedRank(),
+                chunk.documentId(),
+                chunk.chunkId(),
+                displayScore,
+                contentSnippet(chunk.content()),
+                rerankEnabled ? chunk.originalRank() : null,
+                rerankEnabled ? chunk.rerankedRank() : null,
+                rerankEnabled ? chunk.originalScore() : null,
+                rerankEnabled ? chunk.rerankScore() : null
         );
     }
 
-    private RagRetrievalMetadataResponse toRetrievalMetadata(int topK, List<DocumentSearchResultResponse> chunks) {
+    private RagRetrievalMetadataResponse toRetrievalMetadata(RagRetrievalOutcome outcome) {
         return new RagRetrievalMetadataResponse(
-                topK,
-                chunks.size(),
+                outcome.finalTopK(),
+                outcome.chunks().size(),
                 embeddingProvider.provider(),
                 embeddingProvider.model(),
                 embeddingProvider.dimension(),
-                resolveVectorStoreName()
-        );
-    }
-
-    private DocumentSearchResultResponse toSearchResponse(VectorSearchResult result) {
-        return new DocumentSearchResultResponse(
-                result.documentId(),
-                result.chunkId(),
-                result.chunkIndex(),
-                result.score(),
-                result.content(),
-                result.contentLength(),
-                result.headingPath(),
-                result.startOffset(),
-                result.endOffset(),
-                result.chunkStrategy(),
-                result.provider(),
-                result.model(),
-                result.distanceMetric()
+                resolveVectorStoreName(),
+                outcome.rerankEnabled(),
+                outcome.rerankerName(),
+                outcome.rerankEnabled() ? outcome.candidateTopK() : null,
+                outcome.finalTopK(),
+                outcome.rerankEnabled() ? outcome.rerankLatencyMs() : null
         );
     }
 
