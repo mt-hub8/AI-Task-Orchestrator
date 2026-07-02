@@ -12,6 +12,8 @@ class RagDemoDocumentationTest {
     private static final Path DEMO_SOURCE = Path.of("docs/demo/rag-demo-source.md");
     private static final Path GOLDEN_PATH = Path.of("docs/manual/rag-demo-golden-path.md");
     private static final Path GOLDEN_HTTP = Path.of("docs/demo/rag-demo-golden-path.http");
+    private static final Path RETRIEVAL_DATASET = Path.of("docs/evaluation/rag-retrieval-eval-cases.json");
+    private static final Path RETRIEVAL_MANUAL = Path.of("docs/manual/rag-retrieval-evaluation.md");
 
     @Test
     void demoSourceDocumentShouldExistAndCoverRequiredTopics() throws Exception {
@@ -49,5 +51,19 @@ class RagDemoDocumentationTest {
         assertThat(content).contains("/rag/answers");
         assertThat(content).contains("/documents");
         assertThat(content).contains("rag-demo-source.md");
+    }
+
+    @Test
+    void retrievalEvaluationArtifactsShouldExist() throws Exception {
+        assertThat(RETRIEVAL_DATASET).exists();
+        assertThat(RETRIEVAL_MANUAL).exists();
+
+        String dataset = Files.readString(RETRIEVAL_DATASET);
+        String manual = Files.readString(RETRIEVAL_MANUAL);
+
+        assertThat(dataset).contains("rag-retrieval-eval-v1");
+        assertThat(dataset).contains("expectedItems");
+        assertThat(manual).contains("HitRate@K");
+        assertThat(manual).contains("app.evaluation.retrieval.enabled=true");
     }
 }

@@ -1,0 +1,77 @@
+{
+  "datasetName": "rag-retrieval-eval-v1",
+  "description": "RAG retrieval quality evaluation cases for manual demo flow.",
+  "defaultTopK": 5,
+  "cases": [
+    {
+      "caseId": "project-overview",
+      "query": "AI Task Orchestrator 的目标是什么？",
+      "topK": 5,
+      "expectedItems": [
+        {
+          "expectedId": "overview-goal",
+          "chunkContains": "异步任务编排"
+        }
+      ]
+    },
+    {
+      "caseId": "rag-pipeline",
+      "query": "RAG Answer API 的核心流程是什么？",
+      "topK": 5,
+      "expectedItems": [
+        {
+          "expectedId": "rag-pipeline-step",
+          "chunkContains": "query embedding"
+        },
+        {
+          "expectedId": "rag-pipeline-citations",
+          "chunkContains": "citations"
+        }
+      ]
+    },
+    {
+      "caseId": "citation-purpose",
+      "query": "citations 在 RAG 系统中有什么作用？",
+      "topK": 5,
+      "expectedItems": [
+        {
+          "expectedId": "citation-traceability",
+          "chunkContains": "可追溯性"
+        }
+      ]
+    },
+    {
+      "caseId": "cache-key",
+      "query": "Embedding Cache 使用什么作为 cache key？",
+      "topK": 5,
+      "expectedItems": [
+        {
+          "expectedId": "cache-key-four-tuple",
+          "chunkContains": "chunkHash、provider、model、dimension"
+        }
+      ]
+    },
+    {
+      "caseId": "minimal-ui-rationale",
+      "query": "为什么 Minimal Web UI 没有引入 React 或 Vue？",
+      "topK": 5,
+      "expectedItems": [
+        {
+          "expectedId": "no-frontend-framework",
+          "chunkContains": "零构建"
+        }
+      ]
+    },
+    {
+      "caseId": "qdrant-benchmark-purpose",
+      "query": "Qdrant Benchmark 的目的是什么？",
+      "topK": 5,
+      "expectedItems": [
+        {
+          "expectedId": "benchmark-evidence",
+          "chunkContains": "ExactCosineVectorStore 与 QdrantVectorStore"
+        }
+      ]
+    }
+  ]
+}

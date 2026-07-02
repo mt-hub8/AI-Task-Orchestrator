@@ -1,0 +1,121 @@
+package com.tuoman.ai_task_orchestrator.evaluation.rag;
+
+import com.tuoman.ai_task_orchestrator.dto.DocumentSearchRequest;
+import com.tuoman.ai_task_orchestrator.dto.DocumentSearchResultResponse;
+import com.tuoman.ai_task_orchestrator.embedding.EmbeddingProvider;
+import com.tuoman.ai_task_orchestrator.service.DocumentEmbeddingService;
+import com.tuoman.ai_task_orchestrator.vectorstore.VectorStore;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+class RagRetrievalEvaluationExecutorTest {
+
+    private final DocumentEmbeddingService documentEmbeddingService = mock(DocumentEmbeddingService.class);
+    private final EmbeddingProvider embeddingProvider = mock(EmbeddingProvider.class);
+    private final VectorStore vectorStore = new FakeVectorStore();
+
+    private final RagRetrievalEvaluationExecutor executor = new RagRetrievalEvaluationExecutor(
+            documentEmbeddingService,
+            embeddingProvider,
+            vectorStore,
+            new RagRetrievalMetricsCalculator()
+    );
+
+    @Test
+    void evaluateShouldAggregateSummaryMetricsFromPerCaseResults() {
+        when(embeddingProvider.provider()).thenReturn("mock");
+        when(embeddingProvider.model()).thenReturn("mock-embedding-v1");
+        when(embeddingProvider.dimension()).thenReturn(128);
+
+        when(documentEmbeddingService.search(any(DocumentSearchRequest.class)))
+                .thenReturn(List.of(chunk(1L, 101L, "chunkHash provider model dimension")))
+                .thenReturn(List.of(chunk(1L, 201L, "unrelated content")));
+
+        RagRetrievalEvaluationDataset dataset = new RagRetrievalEvaluationDataset(
+                "test-dataset",
+                "test",
+                5,
+                List.of(
+                        new RagRetrievalEvaluationCase(
+                                "hit-case",
+                                "cache key",
+                                5,
+                                List.of(new RagRetrievalExpectedItem("e1", null, null, null, "chunkHash"))
+                        ),
+                        new RagRetrievalEvaluationCase(
+                                "miss-case",
+                                "minimal ui",
+                                5,
+                                List.of(new RagRetrievalExpectedItem("e2", null, null, null, "零构建"))
+                        )
+                )
+        );
+
+        RagRetrievalEvaluationReport report = executor.evaluate(dataset, "dataset.json", 5, 1L);
+
+        assertThat(report.cases()).hasSize(2);
+        assertThat(report.cases().getFirst().hit()).isTrue();
+        assertThat(report.cases().get(1).hit()).isFalse();
+
+        RagRetrievalSummaryMetrics summary = report.summary();
+        assertThat(summary.totalCases()).isEqualTo(2);
+        assertThat(summary.hitCount()).isEqualTo(1);
+        assertThat(summary.hitRateAtK()).isCloseTo(0.5, within(0.000001));
+        assertThat(summary.averageRecallAtK()).isCloseTo(0.5, within(0.000001));
+        assertThat(summary.averagePrecisionAtK()).isCloseTo(0.5, within(0.000001));
+        assertThat(summary.mrr()).isCloseTo(0.5, within(0.000001));
+        assertThat(summary.averageLatencyMs()).isGreaterThanOrEqualTo(0.0);
+        assertThat(report.vectorStore()).isEqualTo("FakeVectorStore");
+
+        ArgumentCaptor<DocumentSearchRequest> captor = ArgumentCaptor.forClass(DocumentSearchRequest.class);
+        org.mockito.Mockito.verify(documentEmbeddingService, org.mockito.Mockito.times(2)).search(captor.capture());
+        assertThat(captor.getAllValues()).allSatisfy(request -> assertThat(request.getDocumentId()).isEqualTo(1L));
+    }
+
+    private DocumentSearchResultResponse chunk(Long documentId, Long chunkId, String content) {
+        return new DocumentSearchResultResponse(
+                documentId,
+                chunkId,
+                0,
+                0.9,
+                content,
+                content.length(),
+                "heading",
+                0,
+                content.length(),
+                "RECURSIVE_TEXT",
+                "mock",
+                "mock-embedding-v1",
+                "COSINE"
+        );
+    }
+
+    private static class FakeVectorStore implements VectorStore {
+        @Override
+        public void upsert(List<com.tuoman.ai_task_orchestrator.vectorstore.VectorStoreDocument> documents) {
+        }
+
+        @Override
+        public List<com.tuoman.ai_task_orchestrator.vectorstore.VectorSearchResult> search(
+                com.tuoman.ai_task_orchestrator.vectorstore.VectorSearchRequest request
+        ) {
+            return List.of();
+        }
+
+        @Override
+        public void deleteByDocumentId(Long documentId) {
+        }
+
+        @Override
+        public void deleteByDocumentIdAndProviderAndModel(Long documentId, String provider, String model) {
+        }
+    }
+}
