@@ -1,0 +1,80 @@
+### AI Task Orchestrator — RAG Demo Golden Path（V2.7.2）
+### 前置：
+### 1. docker compose up -d（MySQL + RabbitMQ）
+### 2. docker compose -f docker-compose.qdrant.yml up -d（Qdrant）
+### 3. 启动 Local Embedding Worker（workers/embedding-worker，端口 8001）
+### 4. Spring Boot：
+###    .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=docker,qdrant" "-Dspring-boot.run.arguments=--app.embedding.provider=local-worker"
+### 5. 浏览器验收：http://localhost:8080/rag-demo.html
+### 详细说明：docs/manual/rag-demo-golden-path.md
+
+@baseUrl = http://localhost:8080
+@documentId = 1
+
+### 上传 RAG Demo 语料（multipart；参数名必须为 file；仅 .txt / .md）
+# IntelliJ：可将下方路径改为项目内文件引用
+# < ../../docs/demo/rag-demo-source.md
+POST {{baseUrl}}/documents
+Content-Type: multipart/form-data; boundary=----RagDemoGoldenBoundary
+
+------RagDemoGoldenBoundary
+Content-Disposition: form-data; name="file"; filename="rag-demo-source.md"
+Content-Type: text/markdown
+
+# AI Task Orchestrator RAG Demo Source
+
+本文件专为 RAG Demo 手工验证设计。
+------RagDemoGoldenBoundary--
+
+> {%
+    if (response.status === 200) {
+        client.global.set("documentId", response.body.documentId);
+    }
+%}
+
+###
+
+### 查询文档元信息（status、chunkCount）
+GET {{baseUrl}}/documents/{{documentId}}
+
+###
+
+### 查询文档 chunks
+GET {{baseUrl}}/documents/{{documentId}}/chunks
+
+###
+
+### 为文档所有 chunk 生成 embedding（local-worker → Qdrant upsert）
+POST {{baseUrl}}/documents/{{documentId}}/embeddings
+
+###
+
+### 【可选预检】文档语义检索 TopK
+POST {{baseUrl}}/documents/search
+Content-Type: application/json
+
+{
+  "query": "RAG Answer API 的核心流程是什么",
+  "topK": 5
+}
+
+###
+
+### 【可选预检】RAG Answer API
+POST {{baseUrl}}/rag/answers
+Content-Type: application/json
+
+{
+  "query": "Embedding Cache 使用什么作为 cache key？",
+  "topK": 5
+}
+
+###
+
+### 【浏览器】打开 Web UI 后，可继续尝试以下推荐问题（非 HTTP 自动执行）：
+# - AI Task Orchestrator 的目标是什么？
+# - RAG Answer API 的核心流程是什么？
+# - citations 在 RAG 系统中有什么作用？
+# - Embedding Cache 使用什么作为 cache key？
+# - 为什么 Minimal Web UI 没有引入 React 或 Vue？
+# - Qdrant Benchmark 的目的是什么？
