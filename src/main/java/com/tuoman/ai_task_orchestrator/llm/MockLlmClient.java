@@ -33,6 +33,10 @@ public class MockLlmClient implements LlmClient {
             return failureResponse(request.getTaskId(), model, "Mock LLM execution failed", prompt, startTime);
         }
 
+        if (prompt.contains("用户问题：") && prompt.contains("上下文：")) {
+            return ragCitationResponse(request, model, prompt, startTime);
+        }
+
         String content = "Mock LLM response for prompt: " + prompt;
         int promptTokenCount = estimateTokenCount(prompt);
         int completionTokenCount = estimateTokenCount(content);
@@ -51,6 +55,44 @@ public class MockLlmClient implements LlmClient {
 
         log.info("Mock LLM response generated, taskId={}, model={}", request.getTaskId(), model);
         return response;
+    }
+
+    private LlmResponse ragCitationResponse(LlmRequest request, String model, String prompt, long startTime) {
+        int citationCount = countCitationMarkers(prompt);
+        StringBuilder references = new StringBuilder();
+        for (int index = 1; index <= citationCount; index++) {
+            if (index > 1) {
+                references.append(' ');
+            }
+            references.append('[').append(index).append(']');
+        }
+
+        String content = "根据检索到的上下文，问题与以下来源相关：" + references;
+        int promptTokenCount = estimateTokenCount(prompt);
+        int completionTokenCount = estimateTokenCount(content);
+
+        LlmResponse response = new LlmResponse();
+        response.setTaskId(request.getTaskId());
+        response.setModel(model);
+        response.setProvider(PROVIDER);
+        response.setContent(content);
+        response.setSuccess(true);
+        response.setErrorMessage(null);
+        response.setPromptTokenCount(promptTokenCount);
+        response.setCompletionTokenCount(completionTokenCount);
+        response.setTotalTokenCount(promptTokenCount + completionTokenCount);
+        response.setLatencyMs(System.currentTimeMillis() - startTime);
+        return response;
+    }
+
+    private int countCitationMarkers(String prompt) {
+        int count = 0;
+        int index = 1;
+        while (prompt.contains("[" + index + "]")) {
+            count++;
+            index++;
+        }
+        return count;
     }
 
     private LlmResponse failureResponse(

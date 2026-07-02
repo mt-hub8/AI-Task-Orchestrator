@@ -1,6 +1,6 @@
 package com.tuoman.ai_task_orchestrator.service;
 
-import com.tuoman.ai_task_orchestrator.dto.DocumentSearchResultResponse;
+import com.tuoman.ai_task_orchestrator.dto.RagCitationResponse;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -8,37 +8,40 @@ import java.util.List;
 @Component
 public class RagPromptBuilder {
 
-    public String buildPrompt(String query, List<DocumentSearchResultResponse> chunks) {
-        StringBuilder prompt = new StringBuilder();
-        prompt.append("你是一个基于给定资料回答问题的助手。\n\n");
-        prompt.append("要求：\n");
-        prompt.append("1. 只能根据 Context 中的信息回答；\n");
-        prompt.append("2. 如果 Context 中没有答案，请回答“无法从当前资料中确定”；\n");
-        prompt.append("3. 回答要简洁、准确；\n");
-        prompt.append("4. 引用资料时使用 [1]、[2] 这样的编号。\n\n");
-        prompt.append("Question:\n");
-        prompt.append(query).append("\n\n");
-        prompt.append("Context:\n");
+    private static final int CONTEXT_CONTENT_MAX_LENGTH = 2000;
 
-        if (chunks == null || chunks.isEmpty()) {
-            prompt.append("无可用资料。\n\n");
-        } else {
-            for (int i = 0; i < chunks.size(); i++) {
-                DocumentSearchResultResponse chunk = chunks.get(i);
-                prompt.append("[").append(i + 1).append("]\n");
-                prompt.append("documentId: ").append(chunk.getDocumentId()).append("\n");
-                prompt.append("chunkId: ").append(chunk.getChunkId()).append("\n");
-                prompt.append("headingPath: ").append(blankIfNull(chunk.getHeadingPath())).append("\n");
-                prompt.append("content:\n");
-                prompt.append(blankIfNull(chunk.getContent())).append("\n\n");
-            }
+    public String buildPrompt(String query, List<RagCitationResponse> citations) {
+        if (citations == null || citations.isEmpty()) {
+            throw new IllegalArgumentException("citations must not be empty");
         }
 
-        prompt.append("Answer:");
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("你是一个基于文档回答问题的助手。\n\n");
+        prompt.append("请只根据下面的上下文回答用户问题。\n");
+        prompt.append("如果上下文中没有足够信息，请回答：“根据当前检索到的文档内容，无法确定。”\n");
+        prompt.append("回答中尽量使用 [1]、[2] 这样的引用标记指向对应来源。\n\n");
+        prompt.append("上下文：\n");
+
+        for (RagCitationResponse citation : citations) {
+            prompt.append("[").append(citation.getSourceIndex()).append("]\n");
+            prompt.append("documentId: ").append(citation.getDocumentId()).append("\n");
+            prompt.append("chunkId: ").append(citation.getChunkId()).append("\n");
+            prompt.append("content: ").append(truncateContent(citation.getContentSnippet())).append("\n\n");
+        }
+
+        prompt.append("用户问题：\n");
+        prompt.append(query).append("\n\n");
+        prompt.append("请给出简洁、准确、可追溯的回答。");
         return prompt.toString();
     }
 
-    private String blankIfNull(String value) {
-        return value == null ? "" : value;
+    private String truncateContent(String content) {
+        if (content == null) {
+            return "";
+        }
+        if (content.length() <= CONTEXT_CONTENT_MAX_LENGTH) {
+            return content;
+        }
+        return content.substring(0, CONTEXT_CONTENT_MAX_LENGTH);
     }
 }

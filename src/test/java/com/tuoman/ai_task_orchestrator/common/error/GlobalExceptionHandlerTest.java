@@ -52,6 +52,17 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void llmProviderBusinessExceptionShouldReturnMappedErrorCode() {
+        BusinessException exception = BusinessException.llmProviderError("llm failed");
+
+        ResponseEntity<ApiErrorResponse> response = handler.handleBusinessException(exception, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getCode()).isEqualTo("LLM_PROVIDER_ERROR");
+    }
+
+    @Test
     void illegalArgumentExceptionShouldReturnInvalidRequest() {
         ResponseEntity<ApiErrorResponse> response = handler.handleIllegalArgumentException(
                 new IllegalArgumentException("bad input"),

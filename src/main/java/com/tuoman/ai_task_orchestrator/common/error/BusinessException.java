@@ -36,6 +36,18 @@ public class BusinessException extends RuntimeException {
         return new BusinessException(ErrorCode.INVALID_REQUEST, HttpStatus.BAD_REQUEST, message);
     }
 
+    public static BusinessException validationError(String message) {
+        return new BusinessException(ErrorCode.VALIDATION_ERROR, HttpStatus.BAD_REQUEST, message);
+    }
+
+    public static BusinessException vectorStoreError(String message) {
+        return new BusinessException(ErrorCode.VECTOR_STORE_ERROR, HttpStatus.INTERNAL_SERVER_ERROR, message);
+    }
+
+    public static BusinessException llmProviderError(String message) {
+        return new BusinessException(ErrorCode.LLM_PROVIDER_ERROR, HttpStatus.INTERNAL_SERVER_ERROR, message);
+    }
+
     public static BusinessException retrievalEvaluationError(String message) {
         return new BusinessException(ErrorCode.RETRIEVAL_EVALUATION_ERROR, HttpStatus.BAD_REQUEST, message);
     }

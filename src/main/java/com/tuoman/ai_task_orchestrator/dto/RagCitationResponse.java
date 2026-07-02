@@ -7,23 +7,13 @@ import lombok.Getter;
 @AllArgsConstructor
 public class RagCitationResponse {
 
-    private Integer citationId;
+    private Integer sourceIndex;
 
     private Long documentId;
 
     private Long chunkId;
 
-    private Integer chunkIndex;
-
     private Double score;
 
-    private String headingPath;
-
-    private Integer startOffset;
-
-    private Integer endOffset;
-
-    private String chunkStrategy;
-
-    private String contentPreview;
+    private String contentSnippet;
 }

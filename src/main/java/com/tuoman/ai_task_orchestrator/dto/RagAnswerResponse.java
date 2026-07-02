@@ -9,13 +9,11 @@ import java.util.List;
 @AllArgsConstructor
 public class RagAnswerResponse {
 
-    private String query;
-
     private String answer;
 
     private List<RagCitationResponse> citations;
 
     private RagRetrievalMetadataResponse retrieval;
 
-    private RagLlmMetadataResponse llm;
+    private RagGenerationMetadataResponse generation;
 }

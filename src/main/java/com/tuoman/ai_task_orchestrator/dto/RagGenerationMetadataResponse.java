@@ -7,17 +7,13 @@ import lombok.Getter;
 @Getter
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public class RagRetrievalMetadataResponse {
-
-    private Integer topK;
-
-    private Integer returned;
+public class RagGenerationMetadataResponse {
 
     private String provider;
 
     private String model;
 
-    private Integer dimension;
+    private Boolean skipped;
 
-    private String vectorStore;
+    private String reason;
 }
